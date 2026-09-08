@@ -1,0 +1,48 @@
+{
+  "monitoring": {
+    "mode": "tree",
+    "processes": ["your-app.exe"],
+    "apps": [],
+    "exe_paths": [],
+    "pids": [],
+    "include_children": true,
+    "interval_sec": 1.0,
+    "data_dir": "data",
+    "disk_limit_mb": 100,
+    "fsync_every_rows": 1,
+    "self_status_interval_sec": 300.0
+  },
+  "end_condition": {
+    "enabled": true,
+    "combine": "all",
+    "sustained_sec": 300.0,
+    "cooldown_sec": 3600.0,
+    "action": "notify_and_stop",
+    "targets_gone": {
+      "enabled": true,
+      "grace_sec": 30.0
+    },
+    "rules": [
+      {
+        "metric": "cpu_machine_percent",
+        "operator": ">=",
+        "value": 85.0,
+        "enabled": true
+      },
+      {
+        "metric": "memory_mb",
+        "operator": ">=",
+        "value": 4096.0,
+        "enabled": false
+      }
+    ]
+  },
+  "notify": {
+    "dingtalk": {
+      "enabled": true,
+      "webhook": "https://oapi.dingtalk.com/robot/send?access_token=PASTE_WEBHOOK_TOKEN",
+      "secret": "PASTE_SECRET",
+      "timeout_sec": 10
+    }
+  }
+}

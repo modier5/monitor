@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
+logs/
+test_run/
+smoke_*/
+config.json
+*.png
+*.svg
+*.log
+build/
+dist/
+*.spec
