@@ -245,7 +245,10 @@ def run_headless(args: argparse.Namespace) -> int:
 
     monitor_config = build_monitor_config(settings)
     condition_monitor = (
-        EndConditionMonitor(settings.end_condition)
+        EndConditionMonitor(
+            settings.end_condition,
+            has_process_targets=monitor_config.has_process_targets,
+        )
         if settings.end_condition.enabled
         else None
     )

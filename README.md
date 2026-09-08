@@ -137,7 +137,9 @@ python -m watchdog_perf plot "data\Monitor_2026-09-*.csv"
 python -m watchdog_perf plot data\Monitor_2026-09-08.csv --save report.png
 ```
 
-图中左轴是 CPU%（进程口径 100 约等于占满 1 个逻辑核心，多线程可能大于 100），右轴是内存 MB；同色实线表示 CPU、同色虚线表示内存。窗口内工具栏支持框选放大、滚轮缩放和平移，图上同时叠加每个序列的 CPU 均值、CPU P90 与内存峰值。
+图中左轴是 CPU%，右轴是内存 MB；同色实线表示 CPU、同色虚线表示内存。窗口内工具栏支持框选放大、滚轮缩放和平移，图上同时叠加每个序列的 CPU 均值、CPU P90 与内存峰值。
+
+CSV 中的进程 CPU 保持核心口径：占满 1 个逻辑核心记 100%，多线程进程可以大于 100%。绘图和 GUI 会把进程值除以逻辑核数，显示成“占整机容量的百分比”（范围 0-100），方便把各进程与整机放在同一把轴上。当指定进程目标时，每次样本还会记录一行 `SYSTEM`（pid=-1）作为真正的整机占用，该行始终是 0-100%；GUI 状态栏和图中的“整机占用”都优先显示这一行。加载历史版本未带 `SYSTEM` 行的进程 CSV 时，绘图会自动补一条“监控目标合计 (整机当量)”曲线，把同一样本内所有进程的核心 CPU% 求和后除以逻辑核数并封顶到 100%。
 
 ## 数据文件
 
@@ -146,14 +148,16 @@ python -m watchdog_perf plot data\Monitor_2026-09-08.csv --save report.png
 | 字段 | 说明 |
 | --- | --- |
 | `timestamp` | 本地时间，毫秒精度 |
-| `process_name` | 进程名；系统模式为 `SYSTEM` |
-| `pid` | 进程 ID；系统模式为 `-1` |
-| `cpu_percent` | 进程 CPU 占比（%），系统模式为整机 CPU |
+| `process_name` | 进程名；系统/整机行为 `SYSTEM` |
+| `pid` | 进程 ID；系统/整机行为 `-1` |
+| `cpu_percent` | 进程核心 CPU 占比（%）；`SYSTEM` 行为整机 CPU，范围 0-100 |
 | `memory_mb` | 进程 Working Set / 系统已用内存（MB） |
 | `status` | `0` 正常；`1` 进程未找到/退出；`2` 采集失败 |
 | `extra` | 状态补充（如 `process_exit`、系统内存总量） |
 
 系统模式额外的总内存/内存占用率等写进 `extra`，便于之后二次分析。
+
+进程树模式时，同一时间点除了每个进程一行外，还会额外写入一行 `SYSTEM`（pid=-1），因此绘图可以同时展示各 EXE/进程曲线与整机占用。较旧版本生成的进程 CSV 没有这行，绘图会自动计算“监控目标合计”作为补偿。
 
 进程树模式每行额外示例：
 
@@ -209,7 +213,7 @@ python -m watchdog_perf monitor --headless --config config.json
 }
 ```
 
-`combine` 为 `all` 表示规则同时满足才结束，`or` 表示任一规则满足即可。`cpu_machine_percent` 是把所有被监控进程的 CPU 占用合计后换算成“占整机所有逻辑核心的百分比”，范围 0-100；`memory_mb` 是所有被监控进程 Working Set 的合计。条件连续满足 `sustained_sec` 秒后触发；`action` 可设为 `notify_and_stop` 或 `notify_only`，后者使用 `cooldown_sec` 防抖。
+`combine` 为 `all` 表示规则同时满足才结束，`or` 表示任一规则满足即可。`cpu_machine_percent` 是把所有被监控进程的核心 CPU% 合计后除以逻辑核心数，换算成“占整机容量的百分比”，范围 0-100；`memory_mb` 是所有被监控进程 Working Set 的合计。条件连续满足 `sustained_sec` 秒后触发；`action` 可设为 `notify_and_stop` 或 `notify_only`，后者使用 `cooldown_sec` 防抖。
 
 除指标规则外，`targets_gone` 提供“任务跑完自动收工”的结束条件：只要监控工具曾经发现过目标，
 之后连续 `grace_sec` 秒没有任何目标进程存活，就发送汇总并（在 `action` 为 `notify_and_stop`
@@ -245,6 +249,7 @@ python -m watchdog_perf plot data\Monitor_当前日期.csv --save report.png
 ```text
 watchdog_perf/
   storage.py   按天滚动、逐行 flush、断行修复
+  metrics.py   CPU 整机当量换算等公共统计
   monitor.py   进程发现/重启跟踪、CPU 内存采样、主循环
   plotting.py  CSV 解析、统计、双轴绘图
   gui.py       Tkinter 界面

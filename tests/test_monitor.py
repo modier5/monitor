@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import unittest
+from datetime import datetime
 
 from watchdog_perf.monitor import MonitorConfig, PerfMonitor, _matches_exe_path
 
@@ -31,6 +32,25 @@ class ExePathMatchingTests(unittest.TestCase):
         finally:
             helper.kill()
             helper.wait(timeout=3)
+
+
+class PerfMonitorTests(unittest.TestCase):
+    def test_process_target_sample_also_includes_system_row(self) -> None:
+        monitor = PerfMonitor(
+            MonitorConfig(pids=(12345,)),
+            store=None,
+        )
+        monitor._collect_process_rows = lambda now: [
+            ("demo.exe", 12345, 200.0, 100.0, 0, "root_pid=12345")
+        ]
+        monitor._collect_system_row = lambda: [
+            ("SYSTEM", -1, 30.0, 8000.0, 0, "cpu_cores=8")
+        ]
+        rows = monitor._collect_once(datetime(2026, 9, 9, 1, 0, 0))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0][0], "demo.exe")
+        self.assertEqual(rows[1][0], "SYSTEM")
+        self.assertEqual(rows[1][1], -1)
 
 
 if __name__ == "__main__":

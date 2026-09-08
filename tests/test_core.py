@@ -6,7 +6,12 @@ import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from watchdog_perf.plotting import load_csv_file, make_figure, save_figure
+from watchdog_perf.plotting import (
+    _aggregate_target_series,
+    load_csv_file,
+    make_figure,
+    save_figure,
+)
 from watchdog_perf.storage import COLUMNS, CsvStore
 
 
@@ -88,6 +93,30 @@ class CsvStoreTests(unittest.TestCase):
 
 
 class PlottingTests(unittest.TestCase):
+    def test_aggregate_target_cpu_is_normalized_and_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            store = CsvStore(data)
+            store.ensure_day(date(2026, 9, 8))
+            start = datetime(2026, 9, 8, 8, 0, 0)
+            for index in range(5):
+                store.write_rows(
+                    start + timedelta(seconds=index),
+                    [
+                        ("alpha.exe", 100, 300.0, 100.0, 0, "cpu_cores=8"),
+                        ("beta.exe", 200, 200.0, 200.0, 0, "cpu_cores=8"),
+                    ],
+                )
+            store.close()
+
+            records = load_csv_file(data / "Monitor_2026-09-08.csv")
+            cpu_points, memory_points = _aggregate_target_series(records, 8)
+            self.assertTrue(cpu_points)
+            self.assertTrue(memory_points)
+            self.assertAlmostEqual(cpu_points[0][1], 62.5)
+            self.assertTrue(all(point[1] <= 100.0 for point in cpu_points))
+            self.assertAlmostEqual(memory_points[0][1], 300.0)
+
     def test_csv_and_figure_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)

@@ -9,6 +9,7 @@ import json
 from watchdog_perf.alerting import (
     DingTalkNotifier,
     EndConditionMonitor,
+    SampleMetrics,
 )
 from watchdog_perf.config import (
     ConditionRule,
@@ -21,6 +22,38 @@ from watchdog_perf.storage import STATUS_NOT_FOUND, STATUS_OK
 
 
 class AlertingTests(unittest.TestCase):
+    def test_cpu_machine_percent_is_divided_by_core_count(self) -> None:
+        metrics = SampleMetrics.from_rows(
+            [
+                ("alpha.exe", 100, 120.0, 10.0, STATUS_OK, ""),
+                ("beta.exe", 200, 180.0, 20.0, STATUS_OK, ""),
+            ],
+            cpu_count=4,
+        )
+        self.assertEqual(metrics.cpu_machine_percent, 75.0)
+        self.assertEqual(metrics.memory_mb, 30.0)
+        self.assertEqual(metrics.process_count, 2)
+
+    def test_embedded_system_row_does_not_distort_process_totals(self) -> None:
+        metrics = SampleMetrics.from_rows(
+            [
+                ("alpha.exe", 100, 120.0, 10.0, STATUS_OK, ""),
+                ("beta.exe", 200, 180.0, 20.0, STATUS_OK, ""),
+                (
+                    "SYSTEM",
+                    -1,
+                    50.0,
+                    8000.0,
+                    STATUS_OK,
+                    "memory_total_mb=16000.0;cpu_cores=4",
+                ),
+            ],
+            cpu_count=4,
+        )
+        self.assertEqual(metrics.cpu_machine_percent, 75.0)
+        self.assertEqual(metrics.memory_mb, 30.0)
+        self.assertEqual(metrics.process_count, 2)
+
     def test_condition_triggers_only_after_sustained_seconds(self) -> None:
         settings = EndConditionSettings(
             enabled=True,
@@ -106,6 +139,30 @@ class AlertingTests(unittest.TestCase):
         self.assertTrue(alert.stop_requested)
         self.assertIn("全部退出", alert.condition_text)
         self.assertGreaterEqual(alert.summary.exit_events, 1)
+
+    def test_system_row_is_live_only_in_system_global_mode(self) -> None:
+        settings = EndConditionSettings(enabled=True)
+        system_row = (
+            "SYSTEM",
+            -1,
+            80.0,
+            8000.0,
+            STATUS_OK,
+            "cpu_cores=8",
+        )
+        process_mode = EndConditionMonitor(
+            settings,
+            cpu_count=8,
+            has_process_targets=True,
+        )
+        self.assertFalse(process_mode._has_live_process_row([system_row]))
+
+        system_mode = EndConditionMonitor(
+            settings,
+            cpu_count=8,
+            has_process_targets=False,
+        )
+        self.assertTrue(system_mode._has_live_process_row([system_row]))
 
     def test_rules_do_not_trigger_while_target_has_never_appeared(self) -> None:
         settings = EndConditionSettings(

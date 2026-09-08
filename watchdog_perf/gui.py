@@ -16,6 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .alerting import DingTalkNotifier, EndConditionMonitor
 from .config import AppSettings
+from .metrics import machine_cpu_percent
 from .monitor import MonitorConfig, PerfMonitor
 from .plotting import load_files, make_figure, save_figure
 from .storage import CsvStore, STATUS_OK
@@ -98,7 +99,7 @@ class WatchdogGui:
 
         ttk.Label(
             top,
-            text="留空监控系统全局；支持 * 通配符、PID:1234、EXE:C:\\path\\app.exe",
+            text="留空仅监控系统全局；非空时同时记录进程与整机占用；支持 * 通配符、PID:1234、EXE:C:\\path\\app.exe",
             foreground="#666666",
         ).grid(row=0, column=5, columnspan=4, sticky="e", padx=(14, 0))
 
@@ -250,7 +251,10 @@ class WatchdogGui:
                 self._dingtalk or AppSettings().dingtalk
             )
             if self._end_condition is not None and self._end_condition.enabled:
-                condition_monitor = EndConditionMonitor(self._end_condition)
+                condition_monitor = EndConditionMonitor(
+                    self._end_condition,
+                    has_process_targets=config.has_process_targets,
+                )
             target = ", ".join(
                 processes
                 + [f"EXE:{path}" for path in exe_paths]
@@ -304,25 +308,57 @@ class WatchdogGui:
                     _, now, rows = event
                     self._sample_count += len(rows)
                     self.count_var.set(f"样本 {self._sample_count}")
-                    cpu_values = [
-                        float(row[2])
+                    ok_rows = [
+                        row
                         for row in rows
-                        if len(row) >= 5
+                        if len(row) >= 6
                         and row[4] == STATUS_OK
-                        and str(row[2]).strip()
-                        and str(row[2]) != "None"
                     ]
-                    memory_values = [
-                        float(row[3])
-                        for row in rows
-                        if len(row) >= 5
-                        and row[4] == STATUS_OK
-                        and str(row[3]).strip()
-                        and str(row[3]) != "None"
+                    system_rows = [
+                        row
+                        for row in ok_rows
+                        if str(row[0]).upper() == "SYSTEM"
+                        and str(row[1]) == "-1"
                     ]
-                    text = f"{now:%H:%M:%S}  目标 {len(rows)} 条"
-                    if cpu_values:
-                        text += f" | CPU {max(cpu_values):.1f}%"
+                    target_rows = [row for row in ok_rows if row not in system_rows]
+
+                    def _cpu(row):
+                        return float(row[2])
+
+                    def _memory(row):
+                        return float(row[3])
+
+                    system_cpu = [
+                        _cpu(row)
+                        for row in system_rows
+                        if str(row[2]).strip() and str(row[2]) != "None"
+                    ]
+                    target_cpu = [
+                        _cpu(row)
+                        for row in target_rows
+                        if str(row[2]).strip() and str(row[2]) != "None"
+                    ]
+                    target_memory = [
+                        _memory(row)
+                        for row in target_rows
+                        if str(row[3]).strip() and str(row[3]) != "None"
+                    ]
+                    system_memory = [
+                        _memory(row)
+                        for row in system_rows
+                        if str(row[3]).strip() and str(row[3]) != "None"
+                    ]
+
+                    total_cpu = None
+                    if system_cpu:
+                        total_cpu = max(system_cpu)
+                    elif target_cpu:
+                        total_cpu = machine_cpu_percent(sum(target_cpu))
+                    memory_values = target_memory or system_memory
+
+                    text = f"{now:%H:%M:%S}  样本 {len(rows)} 条"
+                    if total_cpu is not None:
+                        text += f" | 总CPU {total_cpu:.1f}%"
                     if memory_values:
                         text += f" | 内存峰值 {max(memory_values):.1f} MB"
                     self.live_var.set(text)

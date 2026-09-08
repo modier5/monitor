@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import glob
 import math
+import os
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,7 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
+from .metrics import machine_cpu_percent
 from .storage import daily_filename
 
 try:
@@ -244,6 +246,59 @@ def _p90(values: list[float]) -> float:
     return ordered[index]
 
 
+def _is_system_row(row: dict) -> bool:
+    return (
+        str(row.get(NAME_KEY, "")).upper() == "SYSTEM"
+        and _parse_int(row.get(PID_KEY)) == -1
+    )
+
+
+def _infer_cpu_count(records: Iterable[dict]) -> int:
+    for row in records:
+        extra = _parse_extra_pairs(str(row.get(EXTRA_KEY, "") or ""))
+        for key in ("cpu_cores", "cpu_count", "cores"):
+            value = extra.get(key)
+            if value is not None and value > 0:
+                return int(value)
+    return os.cpu_count() or 1
+
+
+def _aggregate_target_series(
+    records: Iterable[dict],
+    cpu_count: int,
+) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+    """Aggregate all monitored processes into machine-wide equivalent lines."""
+    buckets: dict[datetime, list[float | int]] = {}
+    for row in records:
+        if int(row[STATUS_KEY]) != 0 or _is_system_row(row):
+            continue
+        timestamp = row[TIMESTAMP_KEY]
+        if timestamp is None:
+            continue
+        bucket = buckets.setdefault(timestamp, [0.0, 0.0, 0, 0])
+        cpu = _parse_float(row.get(CPU_KEY))
+        memory = _parse_float(row.get(MEMORY_KEY))
+        if cpu is not None:
+            bucket[0] += float(cpu)
+            bucket[2] += 1
+        if memory is not None:
+            bucket[1] += float(memory)
+            bucket[3] += 1
+
+    cpu_points: list[tuple[float, float]] = []
+    memory_points: list[tuple[float, float]] = []
+    for timestamp in sorted(buckets):
+        raw_cpu, memory_mb, cpu_rows, memory_rows = buckets[timestamp]
+        ts = mdates.date2num(timestamp)
+        if cpu_rows:
+            machine_cpu = machine_cpu_percent(raw_cpu, cpu_count)
+            if machine_cpu is not None:
+                cpu_points.append((ts, machine_cpu))
+        if memory_rows:
+            memory_points.append((ts, memory_mb))
+    return cpu_points, memory_points
+
+
 def _downsample(points: list[tuple[float, float]], limit: int = 30000):
     if len(points) <= limit:
         return points
@@ -281,6 +336,13 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     series_text: list[str] = []
     process_handles: list[Line2D] = []
     total_line_added = False
+    cpu_count = _infer_cpu_count(rows)
+    has_system_line = any(
+        _is_system_row(row)
+        and int(row[STATUS_KEY]) == 0
+        and row[CPU_KEY] is not None
+        for row in rows
+    )
 
     for index, (key, group) in enumerate(groups.items()):
         name, pid = key
@@ -299,8 +361,17 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             cpu = row[CPU_KEY]
             memory = row[MEMORY_KEY]
             if cpu is not None:
-                cpu_values.append(float(cpu))
-                cpu_points.append((ts, float(cpu)))
+                if not _is_system_row(row):
+                    cpu_percent = machine_cpu_percent(
+                        float(cpu),
+                        cpu_count,
+                    )
+                    if cpu_percent is None:
+                        cpu_percent = float(cpu)
+                else:
+                    cpu_percent = float(cpu)
+                cpu_values.append(cpu_percent)
+                cpu_points.append((ts, cpu_percent))
             if memory is not None:
                 memory_values.append(float(memory))
                 memory_points.append((ts, float(memory)))
@@ -308,7 +379,10 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             if "memory_total_mb" in extra:
                 memory_total = extra["memory_total_mb"]
 
-        label = f"{name} [{pid}]"
+        if name.upper() == "SYSTEM" and pid == -1:
+            label = "整机占用"
+        else:
+            label = f"{name} [{pid}]"
         extra_values = _parse_extra_text(str(group[0].get(EXTRA_KEY, "") or ""))
         root_pid = _parse_int(extra_values.get("root_pid"))
         root_name = extra_values.get("root_name", "")
@@ -346,7 +420,11 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             if memory_total is not None:
                 stats_parts.append(f"内存总量 {memory_total:.0f} MB")
             if stats_parts:
-                series_text.append(f"{label}: {' / '.join(stats_parts)}")
+                stats_line = f"{label}: {' / '.join(stats_parts)}"
+                if label == "整机占用":
+                    series_text.insert(0, stats_line)
+                else:
+                    series_text.append(stats_line)
                 process_handles.append(
                     Line2D([], [], color=color, linewidth=1.2, label=label)
                 )
@@ -367,6 +445,48 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
                 alpha=0.7,
             )
             total_line_added = True
+
+    if not has_system_line:
+        cpu_count = _infer_cpu_count(rows)
+        total_cpu_points, total_memory_points = _aggregate_target_series(
+            rows,
+            cpu_count,
+        )
+        if total_cpu_points or total_memory_points:
+            label = "监控目标合计 (整机当量)"
+            if total_cpu_points:
+                points = _downsample(total_cpu_points)
+                ax_cpu.plot(
+                    [p[0] for p in points],
+                    [p[1] for p in points],
+                    color="#111111",
+                    linewidth=1.5,
+                    alpha=0.9,
+                    label=label,
+                )
+            if total_memory_points:
+                points = _downsample(total_memory_points)
+                ax_mem.plot(
+                    [p[0] for p in points],
+                    [p[1] for p in points],
+                    color="#111111",
+                    linewidth=1.5,
+                    linestyle="--",
+                    alpha=0.9,
+                )
+            stats_parts = []
+            if total_cpu_points:
+                values = [point[1] for point in total_cpu_points]
+                stats_parts.append(f"CPU均值 {sum(values) / len(values):.1f}%")
+                stats_parts.append(f"CPU P90 {_p90(values):.1f}%")
+            if total_memory_points:
+                values = [point[1] for point in total_memory_points]
+                stats_parts.append(f"内存峰值 {max(values):.1f} MB")
+            if stats_parts:
+                series_text.insert(0, f"{label}: {' / '.join(stats_parts)}")
+                process_handles.append(
+                    Line2D([], [], color="#111111", linewidth=1.5, label=label)
+                )
 
     if process_handles:
         process_handles.append(
@@ -433,6 +553,7 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     ax_cpu.set_zorder(ax_mem.get_zorder() + 1)
     ax_cpu.patch.set_visible(False)
     ax_cpu.grid(True, linestyle=":", alpha=0.35)
+    ax_cpu.set_ylim(0, 100)
 
     locator = mdates.AutoDateLocator(minticks=4, maxticks=12)
     formatter = mdates.DateFormatter(date_fmt)

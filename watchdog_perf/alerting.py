@@ -19,6 +19,7 @@ from typing import Any, Iterable
 import psutil
 
 from .config import ConditionRule, DingTalkSettings, EndConditionSettings
+from .metrics import machine_cpu_percent
 from .storage import STATUS_MEASURE_ERROR, STATUS_OK
 
 log = logging.getLogger("watchdog_perf.alerting")
@@ -53,6 +54,14 @@ def _int_or_none(value: object) -> int | None:
     return int(parsed) if parsed is not None else None
 
 
+def _is_system_row(row: tuple) -> bool:
+    return (
+        len(row) >= 6
+        and str(row[0]).upper() == "SYSTEM"
+        and _int_or_none(row[1]) == -1
+    )
+
+
 @dataclass
 class SampleMetrics:
     cpu_machine_percent: float | None
@@ -77,16 +86,22 @@ class SampleMetrics:
         if not normal:
             return cls(None, None, 0)
 
-        if all(str(row[0]).upper() == "SYSTEM" for row in normal):
-            cpu = float(normal[0][2])
+        system_rows = [row for row in normal if _is_system_row(row)]
+        process_rows = [row for row in normal if not _is_system_row(row)]
+
+        if system_rows and not process_rows:
+            cpu = float(system_rows[0][2])
             memory = sum(float(row[3]) for row in normal)
             return cls(min(100.0, cpu), memory, len(normal), cpu)
 
-        raw_cpu = sum(float(row[2]) for row in normal)
-        memory = sum(float(row[3]) for row in normal)
-        cores = cpu_count or psutil.cpu_count() or 1
-        machine_cpu = min(100.0, raw_cpu / max(1, cores) * 100.0)
-        return cls(machine_cpu, memory, len(normal), raw_cpu)
+        raw_cpu = sum(float(row[2]) for row in process_rows)
+        memory = (
+            sum(float(row[3]) for row in process_rows)
+            if process_rows
+            else None
+        )
+        machine_cpu = machine_cpu_percent(raw_cpu, cpu_count)
+        return cls(machine_cpu, memory, len(process_rows), raw_cpu)
 
     def satisfies(self, rule: ConditionRule) -> bool:
         if not rule.enabled:
@@ -151,7 +166,13 @@ class SessionSummary:
     memory_max: float = 0.0
     process_stats: dict[tuple[str, int], _ProcessStats] = field(default_factory=dict)
 
-    def record(self, now: datetime, rows: list[tuple], metrics: SampleMetrics) -> None:
+    def record(
+        self,
+        now: datetime,
+        rows: list[tuple],
+        metrics: SampleMetrics,
+        include_system_rows: bool = True,
+    ) -> None:
         if self.ended_at is None:
             self.started_at = self.started_at or now
         self.rows_written += len(rows)
@@ -172,7 +193,10 @@ class SessionSummary:
             if len(row) < 6 or int(row[4]) != STATUS_OK:
                 continue
             name = str(row[0])
-            pid = _int_or_none(row[1]) or 0
+            raw_pid = _int_or_none(row[1])
+            pid = raw_pid if raw_pid is not None else 0
+            if name.upper() == "SYSTEM" and pid == -1 and not include_system_rows:
+                continue
             cpu = _float_or_none(row[2])
             memory = _float_or_none(row[3])
             extra = parse_extra_values(str(row[5] or ""))
@@ -239,9 +263,15 @@ class EndConditionMonitor:
         self,
         settings: EndConditionSettings,
         cpu_count: int | None = None,
+        has_process_targets: bool | None = None,
     ) -> None:
         self.settings = settings
         self.cpu_count = cpu_count or psutil.cpu_count() or 1
+        if has_process_targets is None:
+            has_process_targets = bool(
+                getattr(settings, "has_process_targets", False)
+            )
+        self.has_process_targets = bool(has_process_targets)
         self.summary = SessionSummary(started_at=datetime.now())
         self._satisfied_since: datetime | None = None
         self._cooldown_until: datetime | None = None
@@ -259,11 +289,14 @@ class EndConditionMonitor:
         text = join.join(parts) or "无"
         return f"{text} 持续 {self.settings.sustained_sec:.0f} 秒"
 
-    @staticmethod
-    def _has_live_process_row(rows: list[tuple]) -> bool:
+    def _has_live_process_row(self, rows: list[tuple]) -> bool:
         """A current live/readable target row exists in this sample."""
         for row in rows:
             if len(row) < 6:
+                continue
+            if _is_system_row(tuple(row)):
+                if not self.has_process_targets:
+                    return True
                 continue
             try:
                 status = int(row[4])
@@ -279,7 +312,12 @@ class EndConditionMonitor:
         rows: list[tuple],
     ) -> AlertContext | None:
         metrics = SampleMetrics.from_rows(rows, self.cpu_count)
-        self.summary.record(now, rows, metrics)
+        self.summary.record(
+            now,
+            rows,
+            metrics,
+            include_system_rows=not self.has_process_targets,
+        )
         if not self.settings.enabled:
             return None
 

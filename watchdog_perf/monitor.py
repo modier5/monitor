@@ -554,7 +554,9 @@ class PerfMonitor:
 
     def _collect_once(self, now: datetime) -> list[tuple]:
         if self.config.has_process_targets:
-            return self._collect_process_rows(now)
+            rows = self._collect_process_rows(now)
+            rows.extend(self._collect_system_row())
+            return rows
         return self._collect_system_row()
 
     def _log_self_status(self, force: bool = False) -> None:
