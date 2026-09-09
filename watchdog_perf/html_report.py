@@ -44,6 +44,16 @@ PALETTE = [
     "#749F83",
 ]
 
+_ECHARTS_FILE = Path(__file__).with_name("report_assets") / "echarts.min.js"
+_echarts_js: str | None = None
+
+
+def _load_echarts_js() -> str:
+    global _echarts_js
+    if _echarts_js is None:
+        _echarts_js = _ECHARTS_FILE.read_text(encoding="utf-8")
+    return _echarts_js
+
 
 def _extra_pairs(extra: str) -> dict[str, float]:
     values: dict[str, float] = {}
@@ -308,7 +318,7 @@ def _render_html(payload: dict, title: str) -> str:
     template = _HTML_TEMPLATE
     for key, value in replacements.items():
         template = template.replace(key, value)
-    return template
+    return template.replace("__ECHARTS_JS__", _load_echarts_js())
 
 
 _HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -371,7 +381,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
 </div>
 <script>var DATA = __DATA_JSON__; var CFG = __CONFIG_JSON__;</script>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<script>__ECHARTS_JS__</script>
 <script>
 (function () {
   if (typeof window === 'undefined' || !window.echarts) {

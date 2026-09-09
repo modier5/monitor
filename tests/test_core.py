@@ -163,12 +163,14 @@ class PlottingTests(unittest.TestCase):
                 title="html test",
             )
             text = output.read_text(encoding="utf-8")
-            self.assertIn("echarts.min.js", text)
+            self.assertIn("Licensed to the Apache Software Foundation", text)
             self.assertIn("chartCpu", text)
             self.assertIn("chartMem", text)
             self.assertIn("CPU 占用率", text)
             self.assertIn('"cpuMax": 100.0', text)
             self.assertIn('"memoryTotal":', text)
+            self.assertNotIn("cdn.jsdelivr.net", text)
+            self.assertNotIn("unpkg.com", text)
             self.assertNotIn("plotly-graph-div", text)
 
 
