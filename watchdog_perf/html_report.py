@@ -5,6 +5,7 @@ from __future__ import annotations
 import html as html_mod
 import json
 import math
+import os
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -75,6 +76,33 @@ def _is_system(row: dict) -> bool:
     )
 
 
+def _extra_fields(extra: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for part in str(extra or "").split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _normalize_path(path: str) -> str:
+    text = str(path or "").strip().strip('"')
+    if not text:
+        return ""
+    return os.path.normcase(os.path.normpath(text))
+
+
+def _series_identity(row: dict) -> tuple:
+    if _is_system(row):
+        return ("system", -1)
+    name = str(row.get(NAME_KEY, "") or "unknown")
+    exe_path = _extra_fields(str(row.get(EXTRA_KEY, "") or "")).get("exe_path")
+    if exe_path:
+        return ("exe", _normalize_path(exe_path))
+    return ("name", name.casefold())
+
+
 def _mean(values: list[float | None]) -> float:
     clean = [value for value in values if value is not None]
     return sum(clean) / len(clean) if clean else 0.0
@@ -120,9 +148,9 @@ def _build_payload(records: Iterable[dict]) -> dict:
     if not timeline:
         raise ValueError("CSV 中没有可绘制的正常采样记录")
 
-    proc_names: dict[int, str] = {}
-    proc_cpu: dict[int, dict[datetime, float]] = {}
-    proc_mem: dict[int, dict[datetime, float]] = {}
+    proc_names: dict[tuple, str] = {}
+    proc_raw_cpu: dict[tuple, dict[datetime, float]] = {}
+    proc_mem: dict[tuple, dict[datetime, float]] = {}
     sys_rows: dict[datetime, dict] = {}
     raw_cpu_sum: dict[datetime, float] = {}
     target_mem_sum: dict[datetime, float] = {}
@@ -134,20 +162,21 @@ def _build_payload(records: Iterable[dict]) -> dict:
         if _is_system(row):
             sys_rows[timestamp] = row
             continue
-        pid = int(row[PID_KEY])
+        key = _series_identity(row)
         name = str(row[NAME_KEY] or "unknown")
-        proc_names.setdefault(pid, name)
+        proc_names.setdefault(key, name)
         cpu = row.get(CPU_KEY)
         memory = row.get(MEMORY_KEY)
         if cpu is not None:
             cpu_value = float(cpu)
-            proc_cpu.setdefault(pid, {})[timestamp] = machine_cpu_percent(
-                cpu_value,
-                cpu_count,
-            ) or float(cpu_value)
+            raw_cpu = proc_raw_cpu.setdefault(key, {})
+            raw_cpu[timestamp] = raw_cpu.get(timestamp, 0.0) + cpu_value
             raw_cpu_sum[timestamp] = raw_cpu_sum.get(timestamp, 0.0) + cpu_value
         if memory is not None:
-            proc_mem.setdefault(pid, {})[timestamp] = float(memory)
+            proc_mem_values = proc_mem.setdefault(key, {})
+            proc_mem_values[timestamp] = (
+                proc_mem_values.get(timestamp, 0.0) + float(memory)
+            )
             target_mem_sum[timestamp] = target_mem_sum.get(timestamp, 0.0) + float(memory)
 
     has_system = bool(sys_rows)
@@ -171,12 +200,19 @@ def _build_payload(records: Iterable[dict]) -> dict:
     cpu_series: list[dict] = []
     mem_series: list[dict] = []
     stats: list[dict] = []
-    for index, pid in enumerate(sorted(proc_names)):
-        name = proc_names[pid]
-        label = f"{name} (PID {pid})"
+    for index, key in enumerate(proc_names):
+        name = proc_names[key]
+        label = name
         color = PALETTE[index % len(PALETTE)]
-        cpu_values = [proc_cpu.get(pid, {}).get(ts) for ts in timeline]
-        mem_values = [proc_mem.get(pid, {}).get(ts) for ts in timeline]
+        raw_cpu_by_time = proc_raw_cpu.get(key, {})
+        cpu_values = [
+            machine_cpu_percent(raw_cpu_by_time.get(ts), cpu_count)
+            if ts in raw_cpu_by_time
+            else None
+            for ts in timeline
+        ]
+        mem_by_time = proc_mem.get(key, {})
+        mem_values = [mem_by_time.get(ts) for ts in timeline]
         cpu_series.append({"name": label, "data": cpu_values, "color": color})
         mem_series.append({"name": label, "data": mem_values, "color": color})
         clean_cpu = [v for v in cpu_values if v is not None]

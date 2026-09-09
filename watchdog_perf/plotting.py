@@ -238,6 +238,17 @@ def _is_system_row(row: dict) -> bool:
     )
 
 
+def _series_group_key(row: dict) -> tuple:
+    if _is_system_row(row):
+        return ("system", -1)
+    name = str(row.get(NAME_KEY, "") or "unknown")
+    extra = _parse_extra_text(str(row.get(EXTRA_KEY, "") or ""))
+    exe_path = str(extra.get("exe_path", "") or "").strip().strip('"')
+    if exe_path:
+        return ("exe", os.path.normcase(os.path.normpath(exe_path)))
+    return ("name", name.casefold())
+
+
 def _infer_cpu_count(records: Iterable[dict]) -> int:
     for row in records:
         extra = _parse_extra_pairs(str(row.get(EXTRA_KEY, "") or ""))
@@ -371,11 +382,10 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     if not rows:
         raise ValueError("没有可绘图的数据")
 
-    groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    groups: dict[tuple, list[dict]] = defaultdict(list)
     exit_events: list[datetime] = []
     for row in rows:
-        key = (str(row[NAME_KEY]), int(row[PID_KEY]))
-        groups[key].append(row)
+        groups[_series_group_key(row)].append(row)
         if int(row[STATUS_KEY]) == 1 and row[TIMESTAMP_KEY] is not None:
             exit_events.append(row[TIMESTAMP_KEY])
 
@@ -404,7 +414,6 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     )
 
     for index, (key, group) in enumerate(groups.items()):
-        name, pid = key
         color = colors[index % len(colors)]
         group.sort(key=lambda rec: rec[TIMESTAMP_KEY])
         cpu_points: list[tuple[float, float]] = []
@@ -412,6 +421,8 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
         cpu_values: list[float] = []
         memory_values: list[float] = []
         memory_total: float | None = None
+        cpu_buckets: dict[float, float] = {}
+        mem_buckets: dict[float, float] = {}
 
         for row in group:
             if int(row[STATUS_KEY]) != 0:
@@ -420,34 +431,32 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             cpu = row[CPU_KEY]
             memory = row[MEMORY_KEY]
             if cpu is not None:
-                if not _is_system_row(row):
-                    cpu_percent = machine_cpu_percent(
-                        float(cpu),
-                        cpu_count,
-                    )
-                    if cpu_percent is None:
-                        cpu_percent = float(cpu)
-                else:
-                    cpu_percent = float(cpu)
-                cpu_values.append(cpu_percent)
-                cpu_points.append((ts, cpu_percent))
+                cpu_buckets[ts] = cpu_buckets.get(ts, 0.0) + float(cpu)
             if memory is not None:
-                memory_values.append(float(memory))
-                memory_points.append((ts, float(memory)))
+                mem_buckets[ts] = mem_buckets.get(ts, 0.0) + float(memory)
             extra = _parse_extra_pairs(str(row.get(EXTRA_KEY, "") or ""))
             if "memory_total_mb" in extra:
                 memory_total = extra["memory_total_mb"]
 
-        if name.upper() == "SYSTEM" and pid == -1:
+        is_system = key == ("system", -1)
+        if is_system:
             label = "整机占用"
         else:
-            label = f"{name} [{pid}]"
-        extra_values = _parse_extra_text(str(group[0].get(EXTRA_KEY, "") or ""))
-        root_pid = _parse_int(extra_values.get("root_pid"))
-        root_name = extra_values.get("root_name", "")
-        depth = _parse_int(extra_values.get("depth")) or 0
-        if root_pid is not None and root_pid != pid:
-            label += f" <- {root_name or name}[{root_pid}] d{depth}"
+            label = str(group[0].get(NAME_KEY, "") or "unknown")
+
+        for ts in sorted(cpu_buckets):
+            if is_system:
+                cpu_percent = min(100.0, max(0.0, cpu_buckets[ts]))
+            else:
+                cpu_percent = machine_cpu_percent(cpu_buckets[ts], cpu_count)
+                if cpu_percent is None:
+                    cpu_percent = 0.0
+            cpu_values.append(cpu_percent)
+            cpu_points.append((ts, cpu_percent))
+        for ts in sorted(mem_buckets):
+            memory_values.append(mem_buckets[ts])
+            memory_points.append((ts, mem_buckets[ts]))
+
         if cpu_points:
             points = _downsample(cpu_points)
             ax_cpu.plot(
@@ -656,10 +665,9 @@ def make_plotly_figure(records: Iterable[dict], title: str | None = None):
     if not rows:
         raise ValueError("没有可绘图的数据")
 
-    groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    groups: dict[tuple, list[dict]] = defaultdict(list)
     for row in rows:
-        key = (str(row[NAME_KEY]), int(row[PID_KEY]))
-        groups[key].append(row)
+        groups[_series_group_key(row)].append(row)
 
     cpu_count = _infer_cpu_count(rows)
     has_system_line = any(
@@ -743,27 +751,25 @@ def make_plotly_figure(records: Iterable[dict], title: str | None = None):
         groups,
         key=lambda key: (
             0
-            if (
-                str(key[0]).upper() == "SYSTEM"
-                and key[1] == -1
-            )
+            if key == ("system", -1)
             else 1,
             key,
         ),
     )
     for index, key in enumerate(ordered_keys):
         group = sorted(groups[key], key=lambda rec: rec[TIMESTAMP_KEY])
-        name, pid = key
-        is_system = str(name).upper() == "SYSTEM" and pid == -1
+        is_system = key == ("system", -1)
         if is_system:
             series_name = "整机占用"
         else:
-            series_name = f"{name} [{pid}]"
+            series_name = str(group[0].get(NAME_KEY, "") or "unknown")
 
         cpu_times: list = []
         cpu_values: list[float] = []
         memory_times: list = []
         memory_values: list[float] = []
+        cpu_buckets: dict[datetime, float] = {}
+        mem_buckets: dict[datetime, float] = {}
         for row in group:
             if int(row[STATUS_KEY]) != 0:
                 continue
@@ -771,18 +777,22 @@ def make_plotly_figure(records: Iterable[dict], title: str | None = None):
             cpu = row[CPU_KEY]
             memory = row[MEMORY_KEY]
             if cpu is not None:
-                if is_system:
-                    cpu_percent = float(cpu)
-                else:
-                    cpu_percent = machine_cpu_percent(
-                        float(cpu),
-                        cpu_count,
-                    ) or float(cpu)
-                cpu_times.append(timestamp)
-                cpu_values.append(cpu_percent)
+                cpu_buckets[timestamp] = cpu_buckets.get(timestamp, 0.0) + float(cpu)
             if memory is not None:
-                memory_times.append(timestamp)
-                memory_values.append(float(memory))
+                mem_buckets[timestamp] = mem_buckets.get(timestamp, 0.0) + float(memory)
+
+        for timestamp in sorted(cpu_buckets):
+            if is_system:
+                cpu_percent = min(100.0, max(0.0, cpu_buckets[timestamp]))
+            else:
+                cpu_percent = machine_cpu_percent(cpu_buckets[timestamp], cpu_count)
+                if cpu_percent is None:
+                    cpu_percent = 0.0
+            cpu_times.append(timestamp)
+            cpu_values.append(cpu_percent)
+        for timestamp in sorted(mem_buckets):
+            memory_times.append(timestamp)
+            memory_values.append(mem_buckets[timestamp])
 
         color = palette[index % len(palette)]
         if is_system:

@@ -13,6 +13,7 @@ from watchdog_perf.plotting import (
     save_figure,
     write_html_report,
 )
+from watchdog_perf.html_report import _build_payload
 from watchdog_perf.storage import COLUMNS, CsvStore
 
 
@@ -172,6 +173,82 @@ class PlottingTests(unittest.TestCase):
             self.assertNotIn("cdn.jsdelivr.net", text)
             self.assertNotIn("unpkg.com", text)
             self.assertNotIn("plotly-graph-div", text)
+
+    def test_html_report_merges_repeated_exe_invocations(self) -> None:
+        start = datetime(2026, 9, 9, 9, 0, 0)
+        records = []
+        for run_index, pid in enumerate((100, 101, 102)):
+            for second in range(3):
+                records.append(
+                    {
+                        "timestamp": start
+                        + timedelta(minutes=run_index, seconds=second),
+                        "process_name": "ffmpeg.exe",
+                        "pid": pid,
+                        "cpu_percent": 600.0,
+                        "memory_mb": 180.0 + pid,
+                        "status": 0,
+                        "extra": (
+                            "exe_path=D:\\media\\ffmpeg.exe;cpu_cores=8"
+                        ),
+                    }
+                )
+
+        payload = _build_payload(records)
+        self.assertEqual(len(payload["cpuSeries"]), 1)
+        self.assertEqual(payload["cpuSeries"][0]["name"], "ffmpeg.exe")
+        self.assertEqual(len(payload["memSeries"]), 1)
+        process_stats = [row for row in payload["stats"] if not row["system"]]
+        self.assertEqual(len(process_stats), 1)
+
+    def test_html_report_falls_back_to_process_name_for_old_csv(self) -> None:
+        start = datetime(2026, 9, 9, 9, 0, 0)
+        records = []
+        for run_index, pid in enumerate((21736, 13060)):
+            records.append(
+                {
+                    "timestamp": start + timedelta(minutes=run_index),
+                    "process_name": "ffmpeg.exe",
+                    "pid": pid,
+                    "cpu_percent": 700.0,
+                    "memory_mb": 188.0,
+                    "status": 0,
+                    "extra": "",
+                }
+            )
+
+        payload = _build_payload(records)
+        self.assertEqual(len(payload["cpuSeries"]), 1)
+        self.assertEqual(payload["cpuSeries"][0]["name"], "ffmpeg.exe")
+
+    def test_html_report_sums_concurrent_exe_cpu_without_exceeding_100(self) -> None:
+        start = datetime(2026, 9, 9, 9, 0, 0)
+        records = [
+            {
+                "timestamp": start,
+                "process_name": "ffmpeg.exe",
+                "pid": 100,
+                "cpu_percent": 500.0,
+                "memory_mb": 180.0,
+                "status": 0,
+                "extra": "exe_path=D:\\media\\ffmpeg.exe;cpu_cores=8",
+            },
+            {
+                "timestamp": start,
+                "process_name": "ffmpeg.exe",
+                "pid": 101,
+                "cpu_percent": 400.0,
+                "memory_mb": 220.0,
+                "status": 0,
+                "extra": "exe_path=D:\\media\\ffmpeg.exe;cpu_cores=8",
+            },
+        ]
+
+        payload = _build_payload(records)
+        self.assertEqual(len(payload["cpuSeries"]), 1)
+        self.assertEqual(len(payload["cpuSeries"][0]["data"]), 1)
+        self.assertLessEqual(payload["cpuSeries"][0]["data"][0], 100.0)
+        self.assertAlmostEqual(payload["memSeries"][0]["data"][0], 400.0)
 
 
 if __name__ == "__main__":

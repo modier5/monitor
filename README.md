@@ -4,7 +4,7 @@ Windows 长时进程性能监控与回溯工具。持续采集指定进程（或
 
 ## 快速开始
 
-依赖为 `psutil` 和 `matplotlib`；HTML 报告使用浏览器端的 ECharts（CDN 加载）：
+依赖为 `psutil` 和 `matplotlib`；HTML 报告使用浏览器端的 ECharts，库已内嵌，离线也可打开：
 
 ```powershell
 pip install -r requirements.txt
@@ -48,7 +48,9 @@ python -m watchdog_perf monitor --process chrome.exe --headless
 python -m watchdog_perf monitor --process app.exe --process worker*.exe --pid 12345 --headless
 ```
 
-每一条子进程数据都会独立记录，并在 `extra` 中写入 `root_pid`、`root_name`、`parent_pid`、`depth`，绘图时也会在图例中标注该进程属于哪棵根。
+每一条进程/子进程数据都会独立记录，并在 `extra` 中写入该进程实际 `exe_path` 以及
+`root_pid`、`root_name`、`parent_pid`、`depth`。同一 exe 路径即使被短任务反复启动、
+每次 PID 都不同，绘图时也会合并成一条进程曲线，而不是一次任务一段曲线。
 
 ### 按“应用”配置：进程可能稍后才出现
 
@@ -106,6 +108,7 @@ python -m watchdog_perf monitor --process app.exe --process worker*.exe --pid 12
 
 如果多个目标分别属于几棵互不相干的进程树，也把它们都写进 `roots`，每棵树的进程会按各自
 `root_pid`/`root_name`/`depth` 独立记录，通知汇总里逐进程列出 CPU 均值和内存峰值。
+同名的不同 exe 路径会按 `exe_path` 区分；旧版 CSV 未记录路径时，绘图退化为按进程名合并。
 
 打开 GUI（监控、停止、加载历史 CSV 生成 HTML、导出 PNG/SVG 均可在同一窗口完成）：
 
@@ -145,7 +148,7 @@ python -m watchdog_perf plot data\Monitor_2026-09-08.csv --save report.html
 python -m watchdog_perf plot data\Monitor_2026-09-08.csv --save report.png
 ```
 
-交互 HTML 采用 ECharts 版式：滚动图例可筛选进程，鼠标悬浮/点击可查看具体数值，图表内部支持缩放并带时间轴滑块。每个进程/整机在两个图表中保持同一种颜色。GUI 里加载 CSV 与生成 HTML 都在后台线程执行，不会暂停正在运行的监控。
+交互 HTML 采用 ECharts 版式：滚动图例可筛选进程，鼠标悬浮/点击可查看具体数值，图表内部支持缩放并带时间轴滑块。每个 exe/整机在两个图表中保持同一种颜色；同一 exe 多次启动的 PID 不再拆成多条。GUI 里加载 CSV 与生成 HTML 都在后台线程执行，不会暂停正在运行的监控。
 
 报告默认将图例放在右侧竖排；X 轴锁定到 CSV 数据真实首尾时间，CPU 轴固定为 0-100%，
 内存轴从 0 到本机物理内存总量（优先使用 CSV 中记录的 `memory_total_mb`）。
@@ -173,10 +176,11 @@ CSV 中的进程 CPU 保持核心口径：占满 1 个逻辑核心记 100%，多
 进程树模式每行额外示例：
 
 ```text
-root_pid=12345;root_name=app.exe;parent_pid=23456;depth=1
+exe_path=D:\apps\worker.exe;root_pid=12345;root_name=app.exe;parent_pid=23456;depth=1
 ```
 
 表示 PID 为 `23456` 的子进程属于根进程 `app.exe[12345]` 的一级后代。
+`exe_path` 是新版新增字段，用于把同一 exe 的多次调用/PID 在回溯图中合并展示。
 
 ## 配置文件
 

@@ -79,6 +79,7 @@ class _Tracked:
     name: str
     create_time: float | None
     handle: psutil.Process | None
+    exe_path: str = ""
     explicit: bool = False
     missing: bool = False
     error_active: bool = False
@@ -338,6 +339,8 @@ class PerfMonitor:
     @staticmethod
     def _extra(state: _Tracked) -> str:
         parts: list[str] = []
+        if state.exe_path:
+            parts.append(f"exe_path={state.exe_path}")
         if state.root_pid is not None:
             parts.append(f"root_pid={state.root_pid}")
             parts.append(f"root_name={state.root_name or state.name}")
@@ -458,6 +461,7 @@ class PerfMonitor:
                     create_time=create_time,
                     handle=handle,
                     explicit=pid in explicit_pids,
+                    exe_path=(live[pid][3] or "") if live.get(pid) else "",
                     root_pid=root_pid,
                     root_name=root_name,
                     parent_pid=parent_pid,
@@ -466,6 +470,8 @@ class PerfMonitor:
                 self._tracked[pid] = state
             else:
                 state = previous
+                if live.get(pid) and live[pid][3]:
+                    state.exe_path = live[pid][3]
                 state.root_pid = root_pid
                 state.root_name = root_name
                 state.parent_pid = parent_pid

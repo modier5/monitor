@@ -5,7 +5,12 @@ import sys
 import unittest
 from datetime import datetime
 
-from watchdog_perf.monitor import MonitorConfig, PerfMonitor, _matches_exe_path
+from watchdog_perf.monitor import (
+    MonitorConfig,
+    PerfMonitor,
+    _Tracked,
+    _matches_exe_path,
+)
 
 
 class ExePathMatchingTests(unittest.TestCase):
@@ -35,6 +40,21 @@ class ExePathMatchingTests(unittest.TestCase):
 
 
 class PerfMonitorTests(unittest.TestCase):
+    def test_tracked_extra_includes_exe_path(self) -> None:
+        state = _Tracked(
+            name="ffmpeg.exe",
+            create_time=1.0,
+            handle=None,
+            exe_path=r"D:\media\ffmpeg.exe",
+            root_pid=100,
+            root_name="ffmpeg.exe",
+            parent_pid=50,
+            depth=0,
+        )
+        extra = PerfMonitor._extra(state)
+        self.assertIn(r"exe_path=D:\media\ffmpeg.exe", extra)
+        self.assertIn("root_pid=100", extra)
+
     def test_process_target_sample_also_includes_system_row(self) -> None:
         monitor = PerfMonitor(
             MonitorConfig(pids=(12345,)),
