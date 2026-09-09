@@ -1,0 +1,43 @@
+{
+  "monitoring": {
+    "mode": "tree",
+    "processes": [],
+    "apps": [],
+    "exe_paths": [
+      "D:\\FanxiangCloud\\resources\\app.asar.unpacked\\bin\\OSService\\ai-manager.exe",
+      "D:\\FanxiangCloud\\resources\\app.asar.unpacked\\bin\\OSService\\ai-assets.exe",
+      "D:\\fxcloud_data\\.CLOUDSYSTEM\\.MODELS\\vlm-model-1.0.0\\llama-server.exe",
+      "D:\\FanxiangCloud\\resources\\app.asar.unpacked\\bin\\OSService\\ffmpeg.exe"
+    ],
+    "pids": [],
+    "include_children": true,
+    "interval_sec": 1.0,
+    "data_dir": "data",
+    "disk_limit_mb": 100,
+    "fsync_every_rows": 1,
+    "self_status_interval_sec": 300.0
+  },
+  "end_condition": {
+    "enabled": true,
+    "combine": "all",
+    "sustained_sec": 30.0,
+    "cooldown_sec": 3600.0,
+    "action": "notify_and_stop",
+    "rules": [
+      {
+        "metric": "cpu_machine_percent",
+        "operator": "<=",
+        "value": 5,
+        "enabled": true
+      }
+    ]
+  },
+  "notify": {
+    "dingtalk": {
+      "enabled": true,
+      "webhook": "https://oapi.dingtalk.com/robot/send?access_token=e0dd55c9b9a2d56c744df69ec8f60015d5038a5d2d46dd32b83a7f1f6adb7903",
+      "secret": "SEC2bc5a999d7948d95246e227329c778e37e7169324f9a29a5974b78fcd2c531e6",
+      "timeout_sec": 10
+    }
+  }
+}
