@@ -6,6 +6,8 @@ import argparse
 import logging
 import sys
 import threading
+import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 from . import __version__
@@ -107,7 +109,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_monitor_options(gui)
     gui.add_argument("--log-level", default="INFO")
 
-    plot = sub.add_parser("plot", help="加载 CSV 并绘制交互双轴图")
+    plot = sub.add_parser(
+        "plot",
+        help="加载 CSV 生成交互 HTML（默认），或导出 PNG/SVG/PDF",
+    )
     plot.add_argument(
         "targets",
         nargs="+",
@@ -118,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     plot.add_argument(
         "--save",
         metavar="OUT",
-        help="保存为 PNG/SVG/PDF 后不打开窗口",
+        help="输出 .html 为交互报告；.png/.svg/.pdf 为静态图",
     )
 
     init = sub.add_parser(
@@ -322,9 +327,7 @@ def run_gui_command(args: argparse.Namespace) -> int:
 
 
 def run_plot(args: argparse.Namespace) -> int:
-    import matplotlib.pyplot as plt
-
-    from .plotting import load_files, make_figure, resolve_input_paths, save_figure
+    from .plotting import load_files, resolve_input_paths
 
     paths = resolve_input_paths(args.targets, args.data_dir)
     if not paths:
@@ -340,13 +343,33 @@ def run_plot(args: argparse.Namespace) -> int:
     title = " / ".join(path.name for path in files[:3])
     if len(files) > 3:
         title += f" 等 {len(files)} 个文件"
-    figure = make_figure(records, title=title)
+
     if args.save:
-        out = save_figure(figure, args.save)
-        plt.close(figure)
+        save_target = Path(args.save)
+        if save_target.suffix.lower() == ".html":
+            from .plotting import write_html_report
+
+            out = write_html_report(records, save_target, title=title)
+        else:
+            import matplotlib.pyplot as plt
+
+            from .plotting import make_figure, save_figure
+
+            figure = make_figure(records, title=title)
+            try:
+                out = save_figure(figure, save_target)
+            finally:
+                plt.close(figure)
         print(f"图表已保存: {out}")
     else:
-        plt.show()
+        report_dir = Path(args.data_dir) / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        out = report_dir / f"report_{datetime.now():%Y%m%d_%H%M%S}.html"
+        from .plotting import write_html_report
+
+        write_html_report(records, out, title=title)
+        print(f"交互 HTML 已生成: {out}")
+        webbrowser.open(out.as_uri())
     return 0
 
 

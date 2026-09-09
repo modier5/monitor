@@ -1,4 +1,4 @@
-"""CSV loading and interactive matplotlib charts."""
+"""CSV loading, ECharts HTML reports and matplotlib exports."""
 
 from __future__ import annotations
 
@@ -11,25 +11,10 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
-import matplotlib
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-from matplotlib.lines import Line2D
+import psutil
 
 from .metrics import machine_cpu_percent
 from .storage import daily_filename
-
-try:
-    matplotlib.rcParams["font.sans-serif"] = [
-        "Microsoft YaHei",
-        "SimHei",
-        "Arial Unicode MS",
-        "sans-serif",
-    ]
-    matplotlib.rcParams["axes.unicode_minus"] = False
-except Exception:
-    pass
 
 TIMESTAMP_KEY = "timestamp"
 NAME_KEY = "process_name"
@@ -267,7 +252,32 @@ def _aggregate_target_series(
     records: Iterable[dict],
     cpu_count: int,
 ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
-    """Aggregate all monitored processes into machine-wide equivalent lines."""
+    """Matplotlib variant of target aggregation (date2num x values)."""
+    import matplotlib.dates as mdates
+
+    (
+        cpu_times,
+        cpu_values,
+        memory_times,
+        memory_values,
+    ) = _aggregate_target_values(records, cpu_count)
+    return (
+        [
+            (mdates.date2num(timestamp), value)
+            for timestamp, value in zip(cpu_times, cpu_values)
+        ],
+        [
+            (mdates.date2num(timestamp), value)
+            for timestamp, value in zip(memory_times, memory_values)
+        ],
+    )
+
+
+def _aggregate_target_values(
+    records: Iterable[dict],
+    cpu_count: int,
+) -> tuple[list[datetime], list[float], list[datetime], list[float]]:
+    """Aggregate monitored processes into machine-wide equivalent lines."""
     buckets: dict[datetime, list[float | int]] = {}
     for row in records:
         if int(row[STATUS_KEY]) != 0 or _is_system_row(row):
@@ -285,18 +295,40 @@ def _aggregate_target_series(
             bucket[1] += float(memory)
             bucket[3] += 1
 
-    cpu_points: list[tuple[float, float]] = []
-    memory_points: list[tuple[float, float]] = []
+    cpu_times: list[datetime] = []
+    cpu_values: list[float] = []
+    memory_times: list[datetime] = []
+    memory_values: list[float] = []
     for timestamp in sorted(buckets):
         raw_cpu, memory_mb, cpu_rows, memory_rows = buckets[timestamp]
-        ts = mdates.date2num(timestamp)
         if cpu_rows:
             machine_cpu = machine_cpu_percent(raw_cpu, cpu_count)
             if machine_cpu is not None:
-                cpu_points.append((ts, machine_cpu))
+                cpu_times.append(timestamp)
+                cpu_values.append(machine_cpu)
         if memory_rows:
-            memory_points.append((ts, memory_mb))
-    return cpu_points, memory_points
+            memory_times.append(timestamp)
+            memory_values.append(memory_mb)
+    return cpu_times, cpu_values, memory_times, memory_values
+
+
+def _memory_axis_upper(records: Iterable[dict]) -> float:
+    """Use machine physical memory (or CSV total) as the memory axis ceiling."""
+    observed_max = 0.0
+    recorded_total = 0.0
+    for row in records:
+        if int(row[STATUS_KEY]) != 0:
+            continue
+        memory = _parse_float(row.get(MEMORY_KEY))
+        if memory is not None:
+            observed_max = max(observed_max, float(memory))
+        if _is_system_row(row):
+            extra = _parse_extra_pairs(str(row.get(EXTRA_KEY, "") or ""))
+            if extra.get("memory_total_mb"):
+                recorded_total = max(recorded_total, extra["memory_total_mb"])
+    machine_total = psutil.virtual_memory().total / 1024 / 1024
+    upper = recorded_total or machine_total
+    return max(float(upper), observed_max)
 
 
 def _downsample(points: list[tuple[float, float]], limit: int = 30000):
@@ -306,8 +338,35 @@ def _downsample(points: list[tuple[float, float]], limit: int = 30000):
     return points[::step]
 
 
+def _downsample_lists(
+    times: list,
+    values: list[float],
+    limit: int = 30000,
+) -> tuple[list, list[float]]:
+    if len(times) <= limit:
+        return times, values
+    step = max(1, math.ceil(len(times) / limit))
+    return times[::step], values[::step]
+
+
 def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     """Build a dual-axis figure. Left: CPU%; right: memory MB."""
+    import matplotlib
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    try:
+        matplotlib.rcParams["font.sans-serif"] = [
+            "Microsoft YaHei",
+            "SimHei",
+            "Arial Unicode MS",
+            "sans-serif",
+        ]
+        matplotlib.rcParams["axes.unicode_minus"] = False
+    except Exception:
+        pass
+
     rows = sorted(records, key=lambda rec: rec[TIMESTAMP_KEY])
     if not rows:
         raise ValueError("没有可绘图的数据")
@@ -554,6 +613,12 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     ax_cpu.patch.set_visible(False)
     ax_cpu.grid(True, linestyle=":", alpha=0.35)
     ax_cpu.set_ylim(0, 100)
+    ax_mem.set_ylim(0, _memory_axis_upper(rows))
+    first_x = mdates.date2num(start_dt)
+    last_x = mdates.date2num(end_dt)
+    if last_x <= first_x:
+        last_x = first_x + 0.001
+    ax_cpu.set_xlim(first_x, last_x)
 
     locator = mdates.AutoDateLocator(minticks=4, maxticks=12)
     formatter = mdates.DateFormatter(date_fmt)
@@ -575,3 +640,281 @@ def save_figure(fig: Figure, path: str | Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=160, bbox_inches="tight")
     return out
+
+
+def make_plotly_figure(records: Iterable[dict], title: str | None = None):
+    """Build an interactive stacked Plotly figure: CPU above, memory below."""
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError as exc:
+        raise ImportError(
+            "生成 HTML 报告需要 plotly，请先运行 pip install -r requirements.txt"
+        ) from exc
+
+    rows = sorted(records, key=lambda rec: rec[TIMESTAMP_KEY])
+    if not rows:
+        raise ValueError("没有可绘图的数据")
+
+    groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    for row in rows:
+        key = (str(row[NAME_KEY]), int(row[PID_KEY]))
+        groups[key].append(row)
+
+    cpu_count = _infer_cpu_count(rows)
+    has_system_line = any(
+        _is_system_row(row)
+        and int(row[STATUS_KEY]) == 0
+        and row[CPU_KEY] is not None
+        for row in rows
+    )
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.10,
+        row_heights=[0.58, 0.42],
+        subplot_titles=("CPU 占用率 (%)", "内存占用 (MB)"),
+    )
+    palette = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+        "#aec7e8",
+        "#ffbb78",
+    ]
+
+    def add_series(
+        series_name: str,
+        cpu_times: list,
+        cpu_values: list[float],
+        memory_times: list,
+        memory_values: list[float],
+        color: str,
+        width: float = 1.4,
+    ) -> None:
+        cpu_times, cpu_values = _downsample_lists(cpu_times, cpu_values)
+        memory_times, memory_values = _downsample_lists(memory_times, memory_values)
+        if cpu_times:
+            fig.add_trace(
+                go.Scatter(
+                    x=cpu_times,
+                    y=cpu_values,
+                    name=series_name,
+                    legendgroup=series_name,
+                    mode="lines",
+                    line={"color": color, "width": width},
+                    hovertemplate=(
+                        f"{series_name}<br>%{{x|%Y-%m-%d %H:%M:%S}}<br>"
+                        "CPU: %{y:.2f}%<extra></extra>"
+                    ),
+                ),
+                row=1,
+                col=1,
+            )
+        if memory_times:
+            fig.add_trace(
+                go.Scatter(
+                    x=memory_times,
+                    y=memory_values,
+                    name=series_name,
+                    legendgroup=series_name,
+                    mode="lines",
+                    line={"color": color, "width": width},
+                    showlegend=False,
+                    hovertemplate=(
+                        f"{series_name}<br>%{{x|%Y-%m-%d %H:%M:%S}}<br>"
+                        "内存: %{y:.1f} MB<extra></extra>"
+                    ),
+                ),
+                row=2,
+                col=1,
+            )
+
+    ordered_keys = sorted(
+        groups,
+        key=lambda key: (
+            0
+            if (
+                str(key[0]).upper() == "SYSTEM"
+                and key[1] == -1
+            )
+            else 1,
+            key,
+        ),
+    )
+    for index, key in enumerate(ordered_keys):
+        group = sorted(groups[key], key=lambda rec: rec[TIMESTAMP_KEY])
+        name, pid = key
+        is_system = str(name).upper() == "SYSTEM" and pid == -1
+        if is_system:
+            series_name = "整机占用"
+        else:
+            series_name = f"{name} [{pid}]"
+
+        cpu_times: list = []
+        cpu_values: list[float] = []
+        memory_times: list = []
+        memory_values: list[float] = []
+        for row in group:
+            if int(row[STATUS_KEY]) != 0:
+                continue
+            timestamp = row[TIMESTAMP_KEY]
+            cpu = row[CPU_KEY]
+            memory = row[MEMORY_KEY]
+            if cpu is not None:
+                if is_system:
+                    cpu_percent = float(cpu)
+                else:
+                    cpu_percent = machine_cpu_percent(
+                        float(cpu),
+                        cpu_count,
+                    ) or float(cpu)
+                cpu_times.append(timestamp)
+                cpu_values.append(cpu_percent)
+            if memory is not None:
+                memory_times.append(timestamp)
+                memory_values.append(float(memory))
+
+        color = palette[index % len(palette)]
+        if is_system:
+            color = "#111111"
+        add_series(
+            series_name,
+            cpu_times,
+            cpu_values,
+            memory_times,
+            memory_values,
+            color,
+            width=2.0 if is_system else 1.4,
+        )
+
+    memory_total: float | None = None
+    for row in rows:
+        if _is_system_row(row) and int(row[STATUS_KEY]) == 0:
+            extra_pairs = _parse_extra_pairs(str(row.get(EXTRA_KEY, "") or ""))
+            if "memory_total_mb" in extra_pairs:
+                memory_total = extra_pairs["memory_total_mb"]
+                break
+
+    if memory_total is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=[rows[0][TIMESTAMP_KEY], rows[-1][TIMESTAMP_KEY]],
+                y=[memory_total, memory_total],
+                name="系统总内存",
+                legendgroup="系统总内存",
+                mode="lines",
+                line={"color": "#8c564b", "width": 1.2, "dash": "dot"},
+                hovertemplate="系统总内存: %{y:.0f} MB<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
+
+    if not has_system_line:
+        (
+            total_cpu_times,
+            total_cpu_values,
+            total_memory_times,
+            total_memory_values,
+        ) = _aggregate_target_values(rows, cpu_count)
+        if total_cpu_times or total_memory_times:
+            add_series(
+                "监控目标合计 (整机当量)",
+                total_cpu_times,
+                total_cpu_values,
+                total_memory_times,
+                total_memory_values,
+                "#111111",
+                width=1.8,
+            )
+
+    heading = title or f"进程性能回溯 · {len(groups)} 个进程序列"
+    start_dt = rows[0][TIMESTAMP_KEY]
+    end_dt = rows[-1][TIMESTAMP_KEY]
+    if end_dt == start_dt:
+        end_dt = start_dt + timedelta(seconds=1)
+    memory_upper = _memory_axis_upper(rows)
+    fig.update_layout(
+        title={
+            "text": f"{heading}",
+            "x": 0.03,
+            "xanchor": "left",
+            "font": {"size": 16},
+        },
+        height=860,
+        margin={"t": 55, "b": 48, "l": 74, "r": 250},
+        legend={
+            "orientation": "v",
+            "yanchor": "top",
+            "y": 0.98,
+            "xanchor": "left",
+            "x": 1.01,
+            "bgcolor": "rgba(255,255,255,0.8)",
+            "bordercolor": "#d8d8d8",
+            "borderwidth": 1,
+            "font": {"size": 11},
+        },
+        template="plotly_white",
+        hovermode="x unified",
+    )
+    fig.update_xaxes(
+        title_text="时间",
+        range=[start_dt, end_dt],
+        fixedrange=True,
+        showgrid=True,
+        gridcolor="#e6e6e6",
+        row=2,
+        col=1,
+    )
+    fig.update_xaxes(
+        range=[start_dt, end_dt],
+        fixedrange=True,
+        showgrid=True,
+        gridcolor="#e6e6e6",
+        row=1,
+        col=1,
+    )
+    fig.update_yaxes(
+        title_text="CPU (%)",
+        range=[0, 100],
+        fixedrange=True,
+        zeroline=False,
+        showgrid=True,
+        gridcolor="#e6e6e6",
+        row=1,
+        col=1,
+    )
+    fig.update_yaxes(
+        title_text="内存 (MB)",
+        range=[0, memory_upper],
+        fixedrange=True,
+        zeroline=False,
+        showgrid=True,
+        gridcolor="#e6e6e6",
+        row=2,
+        col=1,
+    )
+    fig.update_annotations(font={"size": 13})
+    return fig
+
+
+def write_html_report(
+    records: Iterable[dict],
+    path: str | Path,
+    title: str | None = None,
+    include_plotlyjs: bool = True,  # kept for backward compatibility
+) -> Path:
+    """Write an ECharts interactive HTML report for loaded CSV records."""
+    from .html_report import write_html_report as _write_html
+
+    return _write_html(records, path, title=title)

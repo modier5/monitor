@@ -1,24 +1,22 @@
-"""Tkinter GUI for live monitoring and offline history charting."""
+"""Tkinter control panel for live monitoring and offline HTML reporting."""
 
 from __future__ import annotations
 
 import queue
 import re
 import threading
-from datetime import date
+import webbrowser
+from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
-import matplotlib.pyplot as plt
 import tkinter as tk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from tkinter import filedialog, messagebox, ttk
 
 from .alerting import DingTalkNotifier, EndConditionMonitor
 from .config import AppSettings
 from .metrics import machine_cpu_percent
 from .monitor import MonitorConfig, PerfMonitor
-from .plotting import load_files, make_figure, save_figure
 from .storage import CsvStore, STATUS_OK
 
 
@@ -51,21 +49,24 @@ class WatchdogGui:
 
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
+        self._history_thread: threading.Thread | None = None
         self._event_queue: queue.Queue = queue.Queue()
-        self._figure = None
-        self._canvas: FigureCanvasTkAgg | None = None
         self._sample_count = 0
         self._records_count = 0
+        self._last_records: list[dict] = []
+        self._last_html_path: Path | None = None
+        self._closed = False
+        self._poll_job: str | None = None
 
-        self.target_var = tk.StringVar(
-            value=", ".join(default_processes)
-        )
+        self.target_var = tk.StringVar(value=", ".join(default_processes))
         self.interval_var = tk.StringVar(value=f"{default_interval_sec:g}")
         self.live_var = tk.StringVar(value="未开始监控")
         self.status_var = tk.StringVar(value=f"数据目录: {self.data_dir}")
         self.count_var = tk.StringVar(value="样本 0")
         self.children_var = tk.BooleanVar(
-            value=bool(app_settings.include_children if app_settings is not None else True)
+            value=bool(
+                app_settings.include_children if app_settings is not None else True
+            )
         )
 
         root.title("Watchdog-Perf 进程性能监控与回溯")
@@ -99,7 +100,10 @@ class WatchdogGui:
 
         ttk.Label(
             top,
-            text="留空仅监控系统全局；非空时同时记录进程与整机占用；支持 * 通配符、PID:1234、EXE:C:\\path\\app.exe",
+            text=(
+                "留空仅监控系统全局；非空时同时记录进程与整机占用；支持 * 通配符、"
+                "PID:1234、EXE:C:\\path\\app.exe"
+            ),
             foreground="#666666",
         ).grid(row=0, column=5, columnspan=4, sticky="e", padx=(14, 0))
 
@@ -113,17 +117,23 @@ class WatchdogGui:
             controls, text="停止监控", command=self._stop_monitor, state="disabled"
         )
         self.stop_button.grid(row=0, column=1, padx=(8, 18))
-        ttk.Button(
-            controls, text="加载 CSV 回溯", command=self._load_history
-        ).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(
-            controls, text="导出 PNG/SVG", command=self._export_figure
-        ).grid(row=0, column=3)
-        ttk.Checkbutton(
+        self.load_history_button = ttk.Button(
+            controls, text="加载 CSV 生成 HTML", command=self._load_history
+        )
+        self.load_history_button.grid(row=0, column=2, padx=(0, 8))
+        self.export_button = ttk.Button(
+            controls,
+            text="导出 PNG/SVG/HTML",
+            command=self._export_figure,
+            state="disabled",
+        )
+        self.export_button.grid(row=0, column=3)
+        self.children_check = ttk.Checkbutton(
             controls,
             text="包含子进程",
             variable=self.children_var,
-        ).grid(row=0, column=4, padx=(8, 0))
+        )
+        self.children_check.grid(row=0, column=4, padx=(8, 0))
 
         self.live_label = ttk.Label(
             controls, textvariable=self.live_var, font=("TkDefaultFont", 10, "bold")
@@ -133,22 +143,20 @@ class WatchdogGui:
             row=0, column=6, sticky="w"
         )
 
-        chart_frame = ttk.Frame(self.root)
-        chart_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 0))
-        chart_frame.rowconfigure(0, weight=1)
-        chart_frame.columnconfigure(0, weight=1)
-        self.chart_frame = chart_frame
-
+        info_frame = ttk.Frame(self.root)
+        info_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 0))
+        info_frame.columnconfigure(0, weight=1)
         hint = ttk.Label(
-            chart_frame,
+            info_frame,
             text=(
-                "1) 输入进程名后点“开始监控”，CSV 会按行实时写入 data 目录；\n"
-                "2) 长时运行后点“加载 CSV 回溯”，即可查看双轴图；工具栏支持缩放与平移。"
+                "1) 开始监控后，后台线程持续采集并实时写入 CSV；\n"
+                "2) 加载 CSV / 生成 HTML 报告在独立线程执行，不会暂停正在运行的监控；\n"
+                "3) 交互 HTML 报告包含上下两张图：CPU 占用率与内存占用，可缩放/平移/筛选图例。"
             ),
-            foreground="#777777",
+            foreground="#555555",
             justify="left",
         )
-        hint.grid(row=0, column=0, sticky="w", padx=14, pady=10)
+        hint.grid(row=0, column=0, sticky="nw", padx=20, pady=24)
 
         bottom = ttk.Frame(self.root, padding=(10, 4, 10, 8))
         bottom.grid(row=2, column=0, sticky="ew")
@@ -207,16 +215,18 @@ class WatchdogGui:
                 f"监控目标: {target_text} | 数据目录: {self.data_dir}"
             )
 
+        include_children = bool(self.children_var.get())
         self._stop_event = threading.Event()
         self._sample_count = 0
         self._worker_thread = threading.Thread(
             target=self._monitor_worker,
-            args=(processes, exe_paths, pids, interval),
+            args=(processes, exe_paths, pids, interval, include_children),
             name="watchdog-collector",
             daemon=True,
         )
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+        self.children_check.configure(state="disabled")
         self.live_var.set("正在启动采集...")
         self._worker_thread.start()
 
@@ -226,6 +236,7 @@ class WatchdogGui:
         exe_paths: list[str],
         pids: list[int],
         interval: float,
+        include_children: bool,
     ) -> None:
         config = MonitorConfig(
             process_patterns=tuple(processes),
@@ -234,7 +245,7 @@ class WatchdogGui:
             interval_sec=interval,
             data_dir=self.data_dir,
             fsync_every_rows=self.fsync_every_rows,
-            include_children=self.children_var.get(),
+            include_children=include_children,
         )
         try:
             store = CsvStore(
@@ -247,9 +258,7 @@ class WatchdogGui:
             monitor = PerfMonitor(config, store)
 
             condition_monitor = None
-            notifier = DingTalkNotifier(
-                self._dingtalk or AppSettings().dingtalk
-            )
+            notifier = DingTalkNotifier(self._dingtalk or AppSettings().dingtalk)
             if self._end_condition is not None and self._end_condition.enabled:
                 condition_monitor = EndConditionMonitor(
                     self._end_condition,
@@ -273,16 +282,11 @@ class WatchdogGui:
                     target,
                     store.current_path,
                 )
-                self._event_queue.put(
-                    ("alert", alert.condition_text, sent)
-                )
+                self._event_queue.put(("alert", alert.condition_text, sent))
                 if alert.stop_requested:
                     self._stop_event.set()
 
-            monitor.run_until_stopped(
-                self._stop_event,
-                on_sample=on_sample,
-            )
+            monitor.run_until_stopped(self._stop_event, on_sample=on_sample)
             self._event_queue.put(("stopped", "监控已停止"))
         except Exception as exc:
             self._event_queue.put(("error", f"{type(exc).__name__}: {exc}"))
@@ -295,6 +299,7 @@ class WatchdogGui:
         self.live_var.set("监控已停止")
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
+        self.children_check.configure(state="normal")
 
     def _poll_events(self) -> None:
         try:
@@ -311,8 +316,7 @@ class WatchdogGui:
                     ok_rows = [
                         row
                         for row in rows
-                        if len(row) >= 6
-                        and row[4] == STATUS_OK
+                        if len(row) >= 6 and row[4] == STATUS_OK
                     ]
                     system_rows = [
                         row
@@ -321,41 +325,33 @@ class WatchdogGui:
                         and str(row[1]) == "-1"
                     ]
                     target_rows = [row for row in ok_rows if row not in system_rows]
-
-                    def _cpu(row):
-                        return float(row[2])
-
-                    def _memory(row):
-                        return float(row[3])
-
                     system_cpu = [
-                        _cpu(row)
+                        float(row[2])
                         for row in system_rows
                         if str(row[2]).strip() and str(row[2]) != "None"
                     ]
                     target_cpu = [
-                        _cpu(row)
+                        float(row[2])
                         for row in target_rows
                         if str(row[2]).strip() and str(row[2]) != "None"
                     ]
                     target_memory = [
-                        _memory(row)
+                        float(row[3])
                         for row in target_rows
                         if str(row[3]).strip() and str(row[3]) != "None"
                     ]
                     system_memory = [
-                        _memory(row)
+                        float(row[3])
                         for row in system_rows
                         if str(row[3]).strip() and str(row[3]) != "None"
                     ]
-
-                    total_cpu = None
                     if system_cpu:
                         total_cpu = max(system_cpu)
                     elif target_cpu:
                         total_cpu = machine_cpu_percent(sum(target_cpu))
+                    else:
+                        total_cpu = None
                     memory_values = target_memory or system_memory
-
                     text = f"{now:%H:%M:%S}  样本 {len(rows)} 条"
                     if total_cpu is not None:
                         text += f" | 总CPU {total_cpu:.1f}%"
@@ -367,23 +363,66 @@ class WatchdogGui:
                     sent = bool(event[2])
                     self.live_var.set("结束条件已触发，准备停止")
                     self.status_var.set(
-                        f"触发条件: {condition_text} | 钉钉通知: {'已发送' if sent else '未启用或失败'}"
+                        f"触发条件: {condition_text} | 钉钉通知: "
+                        f"{'已发送' if sent else '未启用或失败'}"
                     )
                 elif kind == "stopped":
                     self.live_var.set(event[1])
                     self.start_button.configure(state="normal")
                     self.stop_button.configure(state="disabled")
+                    self.children_check.configure(state="normal")
                     self._worker_thread = None
                 elif kind == "error":
                     self.live_var.set("采集异常")
                     self.status_var.set(event[1])
                     self.start_button.configure(state="normal")
                     self.stop_button.configure(state="disabled")
+                    self.children_check.configure(state="normal")
                     messagebox.showerror("采集异常", event[1])
                     self._worker_thread = None
+                elif kind == "history_ready":
+                    html_path = Path(event[1])
+                    records_count = int(event[2])
+                    files_count = int(event[3])
+                    self._last_html_path = html_path
+                    self._records_count = records_count
+                    self.export_button.configure(state="normal")
+                    self.load_history_button.configure(state="normal")
+                    self.status_var.set(
+                        f"HTML 报告已生成: {html_path} | {files_count} 个文件 / "
+                        f"{records_count} 条样本"
+                    )
+                    webbrowser.open(html_path.as_uri())
+                    self._history_thread = None
+                elif kind == "history_error":
+                    self.load_history_button.configure(state="normal")
+                    if self._last_records:
+                        self.export_button.configure(state="normal")
+                    self.status_var.set(f"历史分析失败: {event[1]}")
+                    messagebox.showerror("历史分析失败", event[1])
+                    self._history_thread = None
+                elif kind == "export_ready":
+                    self.export_button.configure(state="normal")
+                    self.load_history_button.configure(state="normal")
+                    self.status_var.set(f"图表已导出: {event[1]}")
+                    self._history_thread = None
+                elif kind == "export_error":
+                    self.export_button.configure(state="normal")
+                    self.load_history_button.configure(state="normal")
+                    self.status_var.set(f"导出失败: {event[1]}")
+                    messagebox.showerror("导出失败", event[1])
+                    self._history_thread = None
         except queue.Empty:
             pass
-        self.root.after(120, self._poll_events)
+        except tk.TclError:
+            self._closed = True
+            return
+
+        if not self._closed:
+            try:
+                self._poll_job = self.root.after(120, self._poll_events)
+            except tk.TclError:
+                self._closed = True
 
     def _load_history(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -392,48 +431,57 @@ class WatchdogGui:
         )
         if not selected:
             return
+        if self._history_thread is not None and self._history_thread.is_alive():
+            messagebox.showinfo("正在处理", "已有历史分析任务在后台运行，请稍候")
+            return
+        self.load_history_button.configure(state="disabled")
+        self.export_button.configure(state="disabled")
+        self.status_var.set(
+            f"正在后台解析 {len(selected)} 个文件并生成 HTML，监控不受影响..."
+        )
+        self._history_thread = threading.Thread(
+            target=self._history_worker,
+            args=(tuple(selected),),
+            name="watchdog-history",
+            daemon=True,
+        )
+        self._history_thread.start()
+
+    def _history_worker(self, selected: tuple[str, ...]) -> None:
         try:
+            from .plotting import load_files, write_html_report
+
             records, files = load_files(selected)
             if not records:
-                messagebox.showwarning("没有数据", "所选文件中没有可解析的有效记录")
-                return
+                raise ValueError("所选文件中没有可解析的有效记录")
             title = " / ".join(path.name for path in files[:3])
             if len(files) > 3:
                 title += f" 等 {len(files)} 个文件"
-            self._show_figure(make_figure(records, title=title))
-            self._records_count = len(records)
-            self.status_var.set(
-                f"已加载 {len(files)} 个文件，{len(records)} 条样本"
+            report_dir = self.data_dir / "reports"
+            output = report_dir / f"report_{datetime.now():%Y%m%d_%H%M%S}.html"
+            write_html_report(records, output, title=title)
+            self._last_records = records
+            self._last_html_path = output
+            self._event_queue.put(
+                ("history_ready", str(output), len(records), len(files))
             )
         except Exception as exc:
-            messagebox.showerror("加载失败", f"{type(exc).__name__}: {exc}")
-
-    def _show_figure(self, fig) -> None:
-        for child in self.chart_frame.winfo_children():
-            child.destroy()
-        self._canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
-        self._canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-        toolbar = NavigationToolbar2Tk(
-            self._canvas,
-            self.chart_frame,
-            pack_toolbar=False,
-        )
-        toolbar.grid(row=1, column=0, sticky="ew")
-        self.chart_frame.rowconfigure(0, weight=1)
-        self.chart_frame.columnconfigure(0, weight=1)
-        self._canvas.draw()
-        if self._figure is not None:
-            plt.close(self._figure)
-        self._figure = fig
+            self._event_queue.put(
+                ("history_error", f"{type(exc).__name__}: {exc}")
+            )
 
     def _export_figure(self) -> None:
-        if self._figure is None:
-            messagebox.showinfo("没有图表", "请先加载历史 CSV 生成图表")
+        if not self._last_records:
+            messagebox.showinfo("没有历史数据", "请先加载 CSV 生成 HTML 报告")
+            return
+        if self._history_thread is not None and self._history_thread.is_alive():
+            messagebox.showinfo("正在处理", "已有后台分析/导出任务在运行")
             return
         path = filedialog.asksaveasfilename(
             title="导出图表",
-            defaultextension=".png",
+            defaultextension=".html",
             filetypes=[
+                ("交互 HTML", "*.html"),
                 ("PNG 图片", "*.png"),
                 ("SVG 矢量图", "*.svg"),
                 ("PDF 文档", "*.pdf"),
@@ -441,20 +489,56 @@ class WatchdogGui:
         )
         if not path:
             return
+        self.export_button.configure(state="disabled")
+        self.status_var.set(f"正在后台导出: {path}")
+        self._history_thread = threading.Thread(
+            target=self._export_worker,
+            args=(path,),
+            name="watchdog-export",
+            daemon=True,
+        )
+        self._history_thread.start()
+
+    def _export_worker(self, path: str) -> None:
         try:
-            out = save_figure(self._figure, path)
-            self.status_var.set(f"图表已导出: {out}")
+            suffix = Path(path).suffix.lower()
+            if suffix == ".html":
+                from .plotting import write_html_report
+
+                out = write_html_report(self._last_records, path)
+            else:
+                import matplotlib.pyplot as plt
+
+                from .plotting import make_figure, save_figure
+
+                figure = make_figure(self._last_records)
+                try:
+                    out = save_figure(figure, path)
+                finally:
+                    plt.close(figure)
+            self._event_queue.put(("export_ready", str(out)))
         except Exception as exc:
-            messagebox.showerror("导出失败", f"{type(exc).__name__}: {exc}")
+            self._event_queue.put(
+                ("export_error", f"{type(exc).__name__}: {exc}")
+            )
 
     def _on_close(self) -> None:
+        self._closed = True
+        if self._poll_job is not None:
+            try:
+                self.root.after_cancel(self._poll_job)
+            except tk.TclError:
+                pass
         self._stop_event.set()
         if self._worker_thread is not None:
             self._worker_thread.join(timeout=4)
+        if self._history_thread is not None and self._history_thread.is_alive():
+            self._history_thread.join(timeout=2)
         self.root.destroy()
 
     def run(self) -> None:
-        self.root.after(120, self._poll_events)
+        self._closed = False
+        self._poll_job = self.root.after(120, self._poll_events)
         self.root.mainloop()
 
 

@@ -11,6 +11,7 @@ from watchdog_perf.plotting import (
     load_csv_file,
     make_figure,
     save_figure,
+    write_html_report,
 )
 from watchdog_perf.storage import COLUMNS, CsvStore
 
@@ -141,6 +142,34 @@ class PlottingTests(unittest.TestCase):
             output = save_figure(figure, data / "chart.png")
             self.assertTrue(output.exists())
             self.assertGreater(output.stat().st_size, 1000)
+
+    def test_interactive_html_report_is_written(self) -> None:
+        start = datetime(2026, 9, 9, 9, 0, 0)
+        records = [
+            {
+                "timestamp": start,
+                "process_name": "alpha.exe",
+                "pid": 100,
+                "cpu_percent": 10.0,
+                "memory_mb": 128.0,
+                "status": 0,
+                "extra": "",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = write_html_report(
+                records,
+                Path(tmp) / "report.html",
+                title="html test",
+            )
+            text = output.read_text(encoding="utf-8")
+            self.assertIn("echarts.min.js", text)
+            self.assertIn("chartCpu", text)
+            self.assertIn("chartMem", text)
+            self.assertIn("CPU 占用率", text)
+            self.assertIn('"cpuMax": 100.0', text)
+            self.assertIn('"memoryTotal":', text)
+            self.assertNotIn("plotly-graph-div", text)
 
 
 if __name__ == "__main__":
