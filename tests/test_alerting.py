@@ -10,6 +10,7 @@ from watchdog_perf.alerting import (
     DingTalkNotifier,
     EndConditionMonitor,
     SampleMetrics,
+    SessionSummary,
 )
 from watchdog_perf.config import (
     ConditionRule,
@@ -53,6 +54,27 @@ class AlertingTests(unittest.TestCase):
         self.assertEqual(metrics.cpu_machine_percent, 75.0)
         self.assertEqual(metrics.memory_mb, 30.0)
         self.assertEqual(metrics.process_count, 2)
+
+    def test_process_detail_cpu_is_machine_normalized(self) -> None:
+        rows = [
+            ("llama-server.exe", 14288, 442.2, 10743.3, STATUS_OK, ""),
+        ]
+        summary = SessionSummary(
+            started_at=datetime(2026, 9, 10, 9, 0, 0),
+            cpu_count=8,
+        )
+        metrics = SampleMetrics.from_rows(rows, cpu_count=8)
+        summary.record(
+            datetime(2026, 9, 10, 9, 0, 0),
+            rows,
+            metrics,
+            include_system_rows=False,
+        )
+
+        process = summary.ordered_processes()[0]
+        self.assertAlmostEqual(process.cpu_avg, 55.27)
+        self.assertAlmostEqual(process.cpu_max, 55.27)
+        self.assertLessEqual(process.cpu_avg, 100.0)
 
     def test_condition_triggers_only_after_sustained_seconds(self) -> None:
         settings = EndConditionSettings(

@@ -212,6 +212,10 @@ class SessionSummary:
                 )
                 self.process_stats[key] = stats
             if cpu is not None:
+                if not (name.upper() == "SYSTEM" and pid == -1):
+                    cpu = machine_cpu_percent(cpu, self.cpu_count)
+                    if cpu is None:
+                        cpu = 0.0
                 stats.observations += 1
                 stats.cpu_sum += cpu
                 stats.cpu_max = max(stats.cpu_max, cpu)
