@@ -1,4 +1,4 @@
-"""Crash-safe daily CSV storage.
+"""Crash-safe monitoring-session CSV storage.
 
 Every sample is appended and flushed immediately so that a blue screen or an
 unexpected process kill can only lose at most the row that was being written.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import errno
 import os
+import re
 import shutil
 import time
 from datetime import date, datetime
@@ -43,6 +44,22 @@ def daily_filename(day: date) -> str:
     return f"Monitor_{day.isoformat()}.csv"
 
 
+def session_filename(day: date, sequence: int) -> str:
+    """Return the CSV name for one monitoring run: date plus daily sequence."""
+    return f"Monitor_{day.isoformat()}_{max(1, int(sequence)):03d}.csv"
+
+
+def _next_session_sequence(data_dir: Path, day: date) -> int:
+    prefix = f"Monitor_{day.isoformat()}_"
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)\.csv$")
+    highest = 0
+    for path in data_dir.glob(f"{prefix}*.csv"):
+        match = pattern.match(path.name)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
 def _to_text(value: object) -> str:
     if value is None or value == "":
         return ""
@@ -52,7 +69,7 @@ def _to_text(value: object) -> str:
 
 
 class CsvStore:
-    """Append-only writer with daily rollover and immediate flush."""
+    """Append-only writer for one monitoring run with immediate flush."""
 
     def __init__(
         self,
@@ -68,7 +85,8 @@ class CsvStore:
         self._file: TextIO | None = None
         self._writer: csv.writer | None = None
         self._current_path: Path | None = None
-        self._current_day: date | None = None
+        self._session_day: date | None = None
+        self._session_sequence: int | None = None
         self._rows_since_check = 0
         self._rows_since_fsync = 0
         self._last_disk_check = 0.0
@@ -78,49 +96,39 @@ class CsvStore:
         return self._current_path
 
     def ensure_day(self, day: date) -> None:
-        """Open today's file, rolling over the previous file when needed."""
-        if self._current_day == day:
+        """Open a session file once; later date changes stay in the same file."""
+        if self._file is not None:
             return
-        self.close()
-        self._open_day(day)
-
-    def _open_day(self, day: date) -> None:
-        path = self.data_dir / daily_filename(day)
-        self._repair_incomplete_tail(path)
         self._check_disk_usage(force=True)
-        needs_header = not path.exists() or path.stat().st_size == 0
+        for _ in range(1000):
+            sequence = _next_session_sequence(self.data_dir, day)
+            path = self.data_dir / session_filename(day, sequence)
+            try:
+                file = path.open("x", encoding="utf-8", newline="")
+            except FileExistsError:
+                continue
+            try:
+                writer = csv.writer(file, lineterminator="\n")
+                file.write("\ufeff")
+                writer.writerow(COLUMNS)
+                file.flush()
+                os.fsync(file.fileno())
+            except Exception:
+                file.close()
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                raise
 
-        self._file = open(path, "a", encoding="utf-8", newline="")
-        self._writer = csv.writer(self._file, lineterminator="\n")
-        self._current_path = path
-        self._current_day = day
-        self._rows_since_fsync = 0
-
-        if needs_header:
-            self._file.write("\ufeff")
-            self._writer.writerow(COLUMNS)
-            self._flush_and_fsync()
-
-    @staticmethod
-    def _repair_incomplete_tail(path: Path) -> None:
-        """Drop a partial final CSV line left by a hard kill mid-write."""
-        if not path.exists() or path.stat().st_size == 0:
+            self._file = file
+            self._writer = writer
+            self._current_path = path
+            self._session_day = day
+            self._session_sequence = sequence
+            self._rows_since_fsync = 0
             return
-        size = path.stat().st_size
-        read_back = min(size, 8192)
-        with path.open("rb") as fp:
-            fp.seek(size - read_back)
-            tail = fp.read()
-        if tail.endswith(b"\n"):
-            return
-
-        last_newline = tail.rfind(b"\n")
-        with path.open("r+b") as fp:
-            if last_newline == -1:
-                fp.truncate(0)
-            else:
-                fp.seek(size - read_back + last_newline + 1)
-                fp.truncate()
+        raise RuntimeError(f"could not allocate a session file for {day}")
 
     def _check_disk_usage(self, force: bool = False) -> None:
         now = time.monotonic()
@@ -140,10 +148,10 @@ class CsvStore:
         rows: Iterable[tuple],
     ) -> int:
         """Write and flush one or more rows for the same timestamp."""
-        if self._file is None or self._writer is None or self._current_day is None:
-            raise RuntimeError("CsvStore is not open")
-        if self._current_day != timestamp.date():
+        if self._file is None or self._writer is None or self._session_day is None:
             self.ensure_day(timestamp.date())
+        if self._file is None or self._writer is None:
+            raise RuntimeError("CsvStore is not open")
 
         row_list = list(rows)
         if not row_list:
@@ -186,7 +194,8 @@ class CsvStore:
         self._file = None
         self._writer = None
         self._current_path = None
-        self._current_day = None
+        self._session_day = None
+        self._session_sequence = None
 
     def write_error_marker(self, text: str) -> None:
         """Write a small non-CSV marker after a fatal storage error."""

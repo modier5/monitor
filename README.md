@@ -1,6 +1,6 @@
 # Watchdog-Perf
 
-Windows 长时进程性能监控与回溯工具。持续采集指定进程（或系统全局）的 CPU 与内存数据，并采用**逐行追加 + 立即 flush** 的方式写入按天滚动的 CSV，尽量降低蓝屏或强制杀进程时的数据丢失；之后可离线加载历史文件生成可缩放、可平移的交互 HTML 图表。
+Windows 长时进程性能监控与回溯工具。持续采集指定进程（或系统全局）的 CPU 与内存数据，并采用**逐行追加 + 立即 flush** 的方式写入按监控会话滚动的 CSV，尽量降低蓝屏或强制杀进程时的数据丢失；之后可离线加载历史文件生成可缩放、可平移的交互 HTML 图表。
 
 ## 快速开始
 
@@ -123,7 +123,7 @@ python -m watchdog_perf gui
 指定日期文件：
 
 ```powershell
-python -m watchdog_perf plot data\Monitor_2026-09-08.csv
+python -m watchdog_perf plot data\Monitor_2026-09-08_001.csv
 ```
 
 也可以直接给日期、目录或通配符：
@@ -139,13 +139,13 @@ python -m watchdog_perf plot "data\Monitor_2026-09-*.csv"
 保存交互 HTML 报告：
 
 ```powershell
-python -m watchdog_perf plot data\Monitor_2026-09-08.csv --save report.html
+python -m watchdog_perf plot data\Monitor_2026-09-08_001.csv --save report.html
 ```
 
 无窗口导出静态图片（仍使用 matplotlib 渲染 PNG/SVG/PDF）：
 
 ```powershell
-python -m watchdog_perf plot data\Monitor_2026-09-08.csv --save report.png
+python -m watchdog_perf plot data\Monitor_2026-09-08_001.csv --save report.png
 ```
 
 交互 HTML 采用 ECharts 版式：滚动图例可筛选进程，鼠标悬浮/点击可查看具体数值，图表内部支持缩放并带时间轴滑块。每个 exe/整机在两个图表中保持同一种颜色；同一 exe 多次启动的 PID 不再拆成多条。GUI 里加载 CSV 与生成 HTML 都在后台线程执行，不会暂停正在运行的监控。
@@ -157,7 +157,10 @@ CSV 中的进程 CPU 保持核心口径：占满 1 个逻辑核心记 100%，多
 
 ## 数据文件
 
-每个本地日生成一个文件：`data/Monitor_YYYY-MM-DD.csv`（UTF-8 with BOM），字段如下：
+每次启动监控生成一个文件：`data/Monitor_YYYY-MM-DD_001.csv`（UTF-8 with BOM），
+其中日期是本次启动日期，`001` 是当天第几次启动。一次监控运行期间即使跨过 0 点，
+数据仍持续追加到同一个文件；当天再次启动监控会创建 `002`、`003` 等新文件。
+字段如下：
 
 | 字段 | 说明 |
 | --- | --- |
@@ -238,7 +241,7 @@ python -m watchdog_perf monitor --headless --config config.json
 
 ## 可靠性设计
 
-- 每个样本采集后立即 `append + flush`，默认每行执行一次 `os.fsync`；停止/跨天时也强制落盘。
+- 每个样本采集后立即 `append + flush`，默认每行执行一次 `os.fsync`；停止时也强制落盘。
 - 每行写入完成即关闭不依赖内存缓存；重启后检测并截断异常中断留下的不完整末行，再继续向当天文件追加，不会重复表头。
 - 0 点自动关闭旧文件并创建新文件；旧文件永久保留。
 - 目标进程消失只记录一次 `status=1` 终止标记，不刷屏；进程重启后自动恢复采样。
@@ -263,7 +266,7 @@ python -m watchdog_perf plot data\Monitor_当前日期.csv --save report.png
 
 ```text
 watchdog_perf/
-  storage.py   按天滚动、逐行 flush、断行修复
+  storage.py   按监控会话原子建文件、逐行 flush
   metrics.py   CPU 整机当量换算等公共统计
   monitor.py   进程发现/重启跟踪、CPU 内存采样、主循环
   plotting.py  CSV 解析、统计、matplotlib 静态导出

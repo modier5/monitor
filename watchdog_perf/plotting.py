@@ -200,8 +200,7 @@ def resolve_input_paths(
             candidate = data_path / daily_filename(day)
             if candidate.is_file():
                 resolved.append(candidate)
-            else:
-                resolved.extend(sorted(data_path.glob(f"Monitor_{day.isoformat()}*.csv")))
+            resolved.extend(sorted(data_path.glob(f"Monitor_{day.isoformat()}*.csv")))
             continue
         except ValueError:
             pass

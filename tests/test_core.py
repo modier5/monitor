@@ -10,6 +10,7 @@ from watchdog_perf.plotting import (
     _aggregate_target_series,
     load_csv_file,
     make_figure,
+    resolve_input_paths,
     save_figure,
     write_html_report,
 )
@@ -23,7 +24,7 @@ def _rows_from_csv(path: Path) -> list[list[str]]:
 
 
 class CsvStoreTests(unittest.TestCase):
-    def test_append_resume_keeps_single_header(self) -> None:
+    def test_each_start_creates_new_session_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)
             day = date(2026, 9, 8)
@@ -37,41 +38,21 @@ class CsvStoreTests(unittest.TestCase):
             store.write_rows(now + timedelta(seconds=1), [row_b])
             store.close()
 
-            # Simulate a restart: reopen the same file and continue appending.
+            # A second launch on the same day gets its own numbered CSV.
             store = CsvStore(data)
             store.ensure_day(day)
             store.write_rows(now + timedelta(seconds=2), [row_a])
             store.close()
 
-            rows = _rows_from_csv(data / "Monitor_2026-09-08.csv")
-            self.assertEqual(rows[0], COLUMNS)
-            self.assertEqual(len(rows), 4)
-            self.assertEqual(rows[-1][1], "demo.exe")
+            first = _rows_from_csv(data / "Monitor_2026-09-08_001.csv")
+            second = _rows_from_csv(data / "Monitor_2026-09-08_002.csv")
+            self.assertEqual(first[0], COLUMNS)
+            self.assertEqual(len(first), 3)
+            self.assertEqual(second[0], COLUMNS)
+            self.assertEqual(len(second), 2)
+            self.assertEqual(second[-1][1], "demo.exe")
 
-    def test_partial_tail_is_removed_on_reopen(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            data = Path(tmp)
-            day = date(2026, 9, 8)
-            store = CsvStore(data)
-            store.ensure_day(day)
-            store.write_rows(datetime(2026, 9, 8, 8, 0, 0), [("a.exe", 1, 0.1, 2.0, 0, "")])
-            store.close()
-
-            path = data / "Monitor_2026-09-08.csv"
-            with path.open("a", encoding="utf-8", newline="") as fp:
-                fp.write("2026-09-08 08:00:01.000,a.exe,1,broken")
-
-            store = CsvStore(data)
-            store.ensure_day(day)
-            store.write_rows(datetime(2026, 9, 8, 8, 0, 2), [("a.exe", 1, 0.2, 2.1, 0, "")])
-            store.close()
-
-            rows = _rows_from_csv(path)
-            self.assertEqual(len(rows), 3)
-            self.assertEqual(len(rows[-1]), len(COLUMNS))
-            self.assertNotIn("broken", rows[-1])
-
-    def test_midnight_rollover_creates_second_file(self) -> None:
+    def test_session_continues_across_midnight_in_single_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)
             store = CsvStore(data)
@@ -87,11 +68,29 @@ class CsvStoreTests(unittest.TestCase):
             )
             store.close()
 
-            first = _rows_from_csv(data / "Monitor_2026-09-08.csv")
-            second = _rows_from_csv(data / "Monitor_2026-09-09.csv")
-            self.assertEqual(len(first), 2)
-            self.assertEqual(len(second), 2)
-            self.assertEqual(second[0], COLUMNS)
+            rows = _rows_from_csv(data / "Monitor_2026-09-08_001.csv")
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(rows[0], COLUMNS)
+            self.assertTrue(rows[2][0].startswith("2026-09-09"))
+
+    def test_date_resolution_finds_all_session_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            day = date(2026, 9, 8)
+            for second in (0, 1):
+                store = CsvStore(data)
+                store.ensure_day(day)
+                store.write_rows(
+                    datetime(2026, 9, 8, 8, 0, second),
+                    [("a.exe", 1, 0.1, 2.0, 0, "")],
+                )
+                store.close()
+
+            paths = resolve_input_paths(["2026-09-08"], data)
+            self.assertEqual(
+                [path.name for path in paths],
+                ["Monitor_2026-09-08_001.csv", "Monitor_2026-09-08_002.csv"],
+            )
 
 
 class PlottingTests(unittest.TestCase):
@@ -111,7 +110,7 @@ class PlottingTests(unittest.TestCase):
                 )
             store.close()
 
-            records = load_csv_file(data / "Monitor_2026-09-08.csv")
+            records = load_csv_file(data / "Monitor_2026-09-08_001.csv")
             cpu_points, memory_points = _aggregate_target_series(records, 8)
             self.assertTrue(cpu_points)
             self.assertTrue(memory_points)
@@ -136,7 +135,7 @@ class PlottingTests(unittest.TestCase):
                 )
             store.close()
 
-            path = data / "Monitor_2026-09-08.csv"
+            path = data / "Monitor_2026-09-08_001.csv"
             records = load_csv_file(path)
             self.assertEqual(len(records), 60)
             figure = make_figure(records, title="test")
