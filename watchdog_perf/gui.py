@@ -34,6 +34,8 @@ class WatchdogGui:
         data_dir: str | Path = "data",
         disk_limit_mb: int = 100,
         fsync_every_rows: int = 1,
+        backup_every_rows: int = 10000,
+        backup_keep: int = 3,
         app_settings: AppSettings | None = None,
     ) -> None:
         self.root = root
@@ -41,6 +43,8 @@ class WatchdogGui:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.disk_limit_mb = disk_limit_mb
         self.fsync_every_rows = max(1, fsync_every_rows)
+        self.backup_every_rows = max(0, backup_every_rows)
+        self.backup_keep = max(1, backup_keep)
         self.app_settings = app_settings
         self._end_condition = (
             app_settings.end_condition if app_settings is not None else None
@@ -252,6 +256,8 @@ class WatchdogGui:
                 data_dir=self.data_dir,
                 disk_limit_mb=self.disk_limit_mb,
                 fsync_every_rows=self.fsync_every_rows,
+                backup_every_rows=self.backup_every_rows,
+                backup_keep=self.backup_keep,
             )
             store.ensure_day(date.today())
             self._event_queue.put(("started", str(store.current_path or "")))
@@ -548,6 +554,8 @@ def run_gui(
     data_dir: str | Path = "data",
     disk_limit_mb: int = 100,
     fsync_every_rows: int = 1,
+    backup_every_rows: int = 10000,
+    backup_keep: int = 3,
     app_settings: AppSettings | None = None,
 ) -> None:
     root = tk.Tk()
@@ -558,5 +566,7 @@ def run_gui(
         data_dir=data_dir,
         disk_limit_mb=disk_limit_mb,
         fsync_every_rows=fsync_every_rows,
+        backup_every_rows=backup_every_rows,
+        backup_keep=backup_keep,
         app_settings=app_settings,
     ).run()

@@ -23,6 +23,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "data_dir": "data",
         "disk_limit_mb": 100,
         "fsync_every_rows": 1,
+        "backup_every_rows": 10000,
+        "backup_keep": 3,
         "self_status_interval_sec": 300.0,
     },
     "end_condition": {
@@ -110,6 +112,8 @@ class AppSettings:
     data_dir: Path = Path("data")
     disk_limit_mb: int = 100
     fsync_every_rows: int = 1
+    backup_every_rows: int = 10000
+    backup_keep: int = 3
     self_status_interval_sec: float = 300.0
     end_condition: EndConditionSettings = field(default_factory=EndConditionSettings)
     dingtalk: DingTalkSettings = field(default_factory=DingTalkSettings)
@@ -315,6 +319,11 @@ def load_settings(config_path: str | Path | None = None) -> AppSettings:
         data_dir=data_dir,
         disk_limit_mb=_as_int(monitoring.get("disk_limit_mb"), 100),
         fsync_every_rows=_as_int(monitoring.get("fsync_every_rows"), 1),
+        backup_every_rows=max(
+            0,
+            _as_int(monitoring.get("backup_every_rows"), 10000),
+        ),
+        backup_keep=max(1, _as_int(monitoring.get("backup_keep"), 3)),
         self_status_interval_sec=_as_float(
             monitoring.get("self_status_interval_sec"), 300.0
         ),

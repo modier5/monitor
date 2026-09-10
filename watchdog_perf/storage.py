@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import errno
+import logging
 import os
 import re
 import shutil
@@ -29,6 +30,8 @@ COLUMNS = [
 STATUS_OK = 0
 STATUS_NOT_FOUND = 1
 STATUS_MEASURE_ERROR = 2
+
+log = logging.getLogger("watchdog_perf.storage")
 
 
 class DiskFullError(RuntimeError):
@@ -76,10 +79,15 @@ class CsvStore:
         data_dir: str | Path = "data",
         disk_limit_mb: int = 100,
         fsync_every_rows: int = 1,
+        backup_every_rows: int = 10000,
+        backup_keep: int = 3,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.disk_limit_bytes = int(disk_limit_mb) * 1024 * 1024
         self.fsync_every_rows = max(1, fsync_every_rows)
+        self.backup_every_rows = max(0, int(backup_every_rows))
+        self.backup_keep = max(1, int(backup_keep))
+        self.backup_dir = self.data_dir / "backups"
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self._file: TextIO | None = None
@@ -89,6 +97,8 @@ class CsvStore:
         self._session_sequence: int | None = None
         self._rows_since_check = 0
         self._rows_since_fsync = 0
+        self._rows_since_backup = 0
+        self._backup_sequence = 0
         self._last_disk_check = 0.0
 
     @property
@@ -127,6 +137,8 @@ class CsvStore:
             self._session_day = day
             self._session_sequence = sequence
             self._rows_since_fsync = 0
+            self._rows_since_backup = 0
+            self._backup_sequence = 0
             return
         raise RuntimeError(f"could not allocate a session file for {day}")
 
@@ -178,6 +190,14 @@ class CsvStore:
                 if exc.errno == errno.ENOSPC or getattr(exc, "winerror", None) == 112:
                     raise DiskFullError(f"write failed, disk is full: {exc}") from exc
                 raise
+
+        self._rows_since_backup += len(row_list)
+        if (
+            self.backup_every_rows > 0
+            and self._rows_since_backup >= self.backup_every_rows
+        ):
+            self._create_backup()
+            self._rows_since_backup = 0
         return len(row_list)
 
     def _flush_and_fsync(self) -> None:
@@ -187,8 +207,60 @@ class CsvStore:
         os.fsync(self._file.fileno())
         self._rows_since_fsync = 0
 
+    def _create_backup(self) -> Path | None:
+        """Copy the current CSV into the backup directory as a durable snapshot."""
+        if (
+            self._file is None
+            or self._current_path is None
+            or not self._current_path.exists()
+            or self._current_path.stat().st_size == 0
+        ):
+            return None
+
+        self._flush_and_fsync()
+        self._backup_sequence += 1
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        name = (
+            f"{self._current_path.stem}_backup_"
+            f"{stamp}_{self._backup_sequence:04d}.csv"
+        )
+        target = self.backup_dir / name
+        temp = target.with_suffix(target.suffix + ".tmp")
+        try:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self._current_path, temp)
+            os.replace(temp, target)
+            self._prune_backups()
+            log.info("backup created: %s", target)
+            return target
+        except OSError as exc:
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+            log.warning("backup failed: %s", exc)
+            return None
+
+    def _prune_backups(self) -> None:
+        if self._current_path is None:
+            return
+        prefix = f"{self._current_path.stem}_backup_"
+        backups = sorted(
+            self.backup_dir.glob(f"{prefix}*.csv"),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        for old in backups[self.backup_keep :]:
+            try:
+                old.unlink()
+            except OSError as exc:
+                log.warning("could not remove old backup %s: %s", old, exc)
+
     def close(self) -> None:
         if self._file is not None:
+            if self.backup_every_rows > 0 and self._rows_since_backup > 0:
+                self._create_backup()
+                self._rows_since_backup = 0
             self._flush_and_fsync()
             self._file.close()
         self._file = None

@@ -10,6 +10,8 @@
     "data_dir": "data",
     "disk_limit_mb": 100,
     "fsync_every_rows": 1,
+    "backup_every_rows": 10000,
+    "backup_keep": 3,
     "self_status_interval_sec": 300.0
   },
   "end_condition": {

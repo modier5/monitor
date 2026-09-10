@@ -92,6 +92,36 @@ class CsvStoreTests(unittest.TestCase):
                 ["Monitor_2026-09-08_001.csv", "Monitor_2026-09-08_002.csv"],
             )
 
+    def test_backup_snapshots_are_created_and_pruned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            day = date(2026, 9, 8)
+            start = datetime(2026, 9, 8, 8, 0, 0)
+            store = CsvStore(
+                data,
+                backup_every_rows=2,
+                backup_keep=2,
+            )
+            store.ensure_day(day)
+            for index in range(6):
+                store.write_rows(
+                    start + timedelta(seconds=index),
+                    [("a.exe", 1, float(index), 10.0 + index, 0, "")],
+                )
+            store.close()
+
+            backups = sorted((data / "backups").glob("*.csv"))
+            self.assertEqual(len(backups), 2)
+            latest_rows = _rows_from_csv(backups[-1])
+            self.assertEqual(len(latest_rows), 7)
+            self.assertEqual(latest_rows[0], COLUMNS)
+
+            paths = resolve_input_paths([str(data)], data)
+            self.assertEqual(
+                [path.name for path in paths],
+                ["Monitor_2026-09-08_001.csv"],
+            )
+
 
 class PlottingTests(unittest.TestCase):
     def test_aggregate_target_cpu_is_normalized_and_capped(self) -> None:

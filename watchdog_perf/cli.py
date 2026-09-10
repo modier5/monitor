@@ -242,10 +242,12 @@ def run_headless(args: argparse.Namespace) -> int:
         settings.include_children,
     )
     log.info(
-        "采样间隔 %.2fs，数据目录 %s，fsync 每 %d 行",
+        "采样间隔 %.2fs，数据目录 %s，fsync 每 %d 行，备份每 %d 行保留 %d 份",
         settings.interval_sec,
         data_dir,
         settings.fsync_every_rows,
+        settings.backup_every_rows,
+        settings.backup_keep,
     )
 
     monitor_config = build_monitor_config(settings)
@@ -290,6 +292,8 @@ def run_headless(args: argparse.Namespace) -> int:
             data_dir=data_dir,
             disk_limit_mb=settings.disk_limit_mb,
             fsync_every_rows=settings.fsync_every_rows,
+            backup_every_rows=settings.backup_every_rows,
+            backup_keep=settings.backup_keep,
         ) as store:
             PerfMonitor(monitor_config, store).run_until_stopped(
                 stop_event,
@@ -321,6 +325,8 @@ def run_gui_command(args: argparse.Namespace) -> int:
         data_dir=settings.data_dir,
         disk_limit_mb=settings.disk_limit_mb,
         fsync_every_rows=settings.fsync_every_rows,
+        backup_every_rows=settings.backup_every_rows,
+        backup_keep=settings.backup_keep,
         app_settings=settings,
     )
     return 0

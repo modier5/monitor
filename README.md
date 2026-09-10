@@ -205,7 +205,9 @@ python -m watchdog_perf monitor --headless --config config.json
     "pids": [12345],
     "include_children": true,
     "interval_sec": 1.0,
-    "data_dir": "data"
+    "data_dir": "data",
+    "backup_every_rows": 10000,
+    "backup_keep": 3
   },
   "end_condition": {
     "enabled": true,
@@ -242,8 +244,8 @@ python -m watchdog_perf monitor --headless --config config.json
 ## 可靠性设计
 
 - 每个样本采集后立即 `append + flush`，默认每行执行一次 `os.fsync`；停止时也强制落盘。
-- 每行写入完成即关闭不依赖内存缓存；重启后检测并截断异常中断留下的不完整末行，再继续向当天文件追加，不会重复表头。
-- 0 点自动关闭旧文件并创建新文件；旧文件永久保留。
+- 每行写入完成即落盘，不依赖内存缓存；一次监控启动对应一个会话文件，跨 0 点也不会切换文件。
+- 达到 `backup_every_rows` 行时，在 `data/backups/` 生成当前会话的完整 CSV 快照；默认保留最近 `backup_keep` 份，超过数量后自动清理最旧快照。备份目录不会参与 `plot` 的批量加载。
 - 目标进程消失只记录一次 `status=1` 终止标记，不刷屏；进程重启后自动恢复采样。
 - 磁盘剩余低于 100 MB（可用 `--disk-limit-mb` 调整）时停止采集并写 `ERROR_DISK_FULL.txt`，避免影响系统稳定性。
 - 每 5 分钟在 `monitor.log` 记录监控进程自身 RSS，便于观察本工具是否有内存增长。
@@ -257,10 +259,11 @@ python -m watchdog_perf monitor --process "你的程序名.exe" --headless --int
 运行 2 小时后执行：
 
 ```powershell
-python -m watchdog_perf plot data\Monitor_当前日期.csv --save report.png
+python -m watchdog_perf plot data\Monitor_2026-09-10_001.csv --save report.png
 ```
 
-若监控程序或电脑蓝屏/强制结束，重新运行 `monitor` 会直接继续追加当天 CSV；原有行数不丢，用 `plot` 可看到完整曲线与终止点。
+若监控程序或电脑蓝屏/强制结束，已 flush 的历史行保留；重新运行 `monitor` 会在当天创建新的会话 CSV，
+用 `plot` 仍可一次加载当天全部会话文件。若主 CSV 损坏，可手动加载 `data\backups\` 中最近的完整快照。
 
 ## 目录说明
 

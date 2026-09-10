@@ -123,6 +123,8 @@ class AlertingTests(unittest.TestCase):
             settings = load_settings(path)
             self.assertEqual(settings.end_condition.combine, "all")
             self.assertEqual(settings.fsync_every_rows, 1)
+            self.assertEqual(settings.backup_every_rows, 10000)
+            self.assertEqual(settings.backup_keep, 3)
             self.assertFalse(settings.dingtalk.enabled)
 
     def test_targets_gone_waits_for_first_appearance_then_grace(self) -> None:
