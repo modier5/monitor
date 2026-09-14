@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import csv
 import glob
+import logging
 import math
 import os
+import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -13,8 +15,10 @@ from typing import Iterable
 
 import psutil
 
+log = logging.getLogger("watchdog_perf.plotting")
+
 from .metrics import machine_cpu_percent
-from .storage import daily_filename
+from .storage import COLUMNS, daily_filename, format_timestamp
 
 TIMESTAMP_KEY = "timestamp"
 NAME_KEY = "process_name"
@@ -79,6 +83,108 @@ def _parse_timestamp(value: str) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+_PATH_DATE_RE = re.compile(r"^Monitor_(\d{4}-\d{2}-\d{2})")
+_PARTIAL_TS_RE = re.compile(r"^(\d{1,2}):(\d{1,2})\.(\d+)$")
+_LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d+)")
+
+
+def _path_date(path):
+    match = _PATH_DATE_RE.search(Path(path).name)
+    if not match:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
+def _parse_minsec(value):
+    text = str(value or "").strip()
+    match = _PARTIAL_TS_RE.match(text)
+    if not match:
+        return None
+    minute = int(match.group(1))
+    second = int(match.group(2))
+    if minute > 59 or second > 59:
+        return None
+    millis = int((match.group(3) + "000")[:3])
+    return minute, second, millis
+
+
+def _log_anchor_for_partial(path, first):
+    if first is None:
+        return None
+    log_path = Path(path).parent / "monitor.log"
+    if not log_path.is_file():
+        return None
+    day = _path_date(path)
+    try:
+        with log_path.open(encoding="utf-8-sig", errors="replace") as fp:
+            for line in fp:
+                match = _LOG_TS_RE.match(line)
+                if not match:
+                    continue
+                dt = datetime(
+                    int(match.group(1)),
+                    int(match.group(2)),
+                    int(match.group(3)),
+                    int(match.group(4)),
+                    int(match.group(5)),
+                    int(match.group(6)),
+                )
+                if day is not None and dt.date() < day:
+                    continue
+                if dt.minute == first[0] and dt.second == first[1]:
+                    return dt
+    except OSError:
+        return None
+    return None
+
+
+def _sibling_anchor_for_partial(path, first):
+    if first is None:
+        return None
+    day = _path_date(path)
+    if day is None:
+        return None
+    target = Path(path)
+    for candidate in sorted(target.parent.glob(f"Monitor_{day.isoformat()}*.csv")):
+        if candidate.resolve() == target.resolve():
+            continue
+        try:
+            with candidate.open(newline="", encoding="utf-8-sig") as fp:
+                reader = csv.reader(fp)
+                next(reader, None)
+                for row in reader:
+                    if not row:
+                        continue
+                    dt = _parse_timestamp(str(row[0]).strip())
+                    if dt is not None and dt.minute == first[0] and dt.second == first[1]:
+                        return dt
+        except (OSError, csv.Error):
+            continue
+    return None
+
+
+def _partial_base(path, records):
+    first = None
+    for record in records:
+        partial = _parse_minsec(record.get(TIMESTAMP_KEY))
+        if partial is not None:
+            first = partial
+            break
+    if first is None:
+        return None
+    anchor = _sibling_anchor_for_partial(path, first) or _log_anchor_for_partial(path, first)
+    if anchor is not None:
+        offset = first[0] * 60 + first[1] + first[2] / 1000
+        return anchor - timedelta(seconds=offset)
+    day = _path_date(path)
+    if day is None:
+        return None
+    return datetime.combine(day, datetime.min.time())
 
 
 def _parse_float(value: object) -> float | None:
@@ -157,11 +263,27 @@ def load_csv_file(path: str | Path) -> list[dict]:
                     record[key] = raw_row[index] if index < len(raw_row) else ""
             records.append(record)
 
+    partial_base = _partial_base(path, records)
     parsed: list[dict] = []
+    last_minsec: tuple[int, int] | None = None
+    partial_hours = 0
+    partial_used = False
     for record in records:
         dt = _parse_timestamp(str(record.get(TIMESTAMP_KEY, "")))
+        if dt is None and partial_base is not None:
+            partial = _parse_minsec(record.get(TIMESTAMP_KEY))
+            if partial is not None:
+                minute, second, millis = partial
+                if last_minsec is not None and (minute, second) < last_minsec:
+                    partial_hours += 1
+                last_minsec = (minute, second)
+                offset = partial_hours * 3600 + minute * 60 + second + millis / 1000
+                dt = partial_base + timedelta(seconds=offset)
+                partial_used = True
         if dt is None:
             continue
+        if last_minsec is None and dt is not None:
+            last_minsec = (dt.minute, dt.second)
         parsed.append(
             {
                 TIMESTAMP_KEY: dt,
@@ -173,6 +295,8 @@ def load_csv_file(path: str | Path) -> list[dict]:
                 EXTRA_KEY: str(record.get(EXTRA_KEY, "") or ""),
             }
         )
+    if partial_used:
+        log.info("%s: 检测到不完整时间戳，已按基准 %s 重建", Path(path).name, partial_base)
     parsed.sort(key=lambda rec: rec[TIMESTAMP_KEY])
     return parsed
 
@@ -222,6 +346,37 @@ def load_files(paths: Iterable[str | Path]) -> tuple[list[dict], list[Path]]:
         records.extend(load_csv_file(path))
     records.sort(key=lambda rec: rec[TIMESTAMP_KEY])
     return records, files
+
+
+def write_csv_file(records: Iterable[dict], path: str | Path) -> Path:
+    """Write canonical Watchdog CSV rows (full timestamps) to a new file."""
+    path = Path(path)
+
+    def _text(value):
+        if value is None or value == "":
+            return ""
+        if isinstance(value, float):
+            return f"{value:.2f}"
+        return str(value)
+
+    with path.open("w", encoding="utf-8-sig", newline="") as fp:
+        writer = csv.writer(fp, lineterminator="\n")
+        writer.writerow(COLUMNS)
+        for record in records:
+            ts = record.get(TIMESTAMP_KEY)
+            stamp = format_timestamp(ts) if isinstance(ts, datetime) else str(ts or "")
+            writer.writerow(
+                [
+                    stamp,
+                    _text(record.get(NAME_KEY, "")),
+                    _text(record.get(PID_KEY, -1)),
+                    _text(record.get(CPU_KEY)),
+                    _text(record.get(MEMORY_KEY)),
+                    _text(record.get(STATUS_KEY, 0)),
+                    _text(record.get(EXTRA_KEY, "")),
+                ]
+            )
+    return path
 
 
 def _p90(values: list[float]) -> float:

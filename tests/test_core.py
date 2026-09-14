@@ -280,5 +280,42 @@ class PlottingTests(unittest.TestCase):
         self.assertAlmostEqual(payload["memSeries"][0]["data"][0], 400.0)
 
 
+    def test_load_csv_rebuilds_partial_minsec_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "Monitor_2026-09-12_需要核对时间.csv"
+            header = "timestamp,process_name,pid,cpu_percent,memory_mb,status,extra\n"
+            rows = (
+                "00:00.4,demo.exe,100,1.0,10.0,0,\n"
+                "00:00.4,demo.exe,101,1.0,10.1,0,\n"
+                "00:00.4,SYSTEM,-1,2.0,100.0,0,\n"
+                "00:00.4,demo.exe,102,1.0,10.2,0,\n"
+                "00:01.4,demo.exe,100,1.0,10.0,0,\n"
+                "00:01.4,demo.exe,101,1.0,10.1,0,\n"
+                "00:01.4,SYSTEM,-1,2.0,100.0,0,\n"
+                "00:01.4,demo.exe,102,1.0,10.2,0,\n"
+                "59:59.4,demo.exe,100,1.0,10.0,0,\n"
+                "59:59.4,demo.exe,101,1.0,10.1,0,\n"
+                "59:59.4,SYSTEM,-1,2.0,100.0,0,\n"
+                "59:59.4,demo.exe,102,1.0,10.2,0,\n"
+                "00:00.2,demo.exe,100,1.0,10.0,0,\n"
+                "00:00.2,demo.exe,101,1.0,10.1,0,\n"
+                "00:00.2,SYSTEM,-1,2.0,100.0,0,\n"
+                "00:00.2,demo.exe,102,1.0,10.2,0,\n"
+            )
+            data.write_text(header + rows, encoding="utf-8-sig")
+
+            records = load_csv_file(data)
+            stamps = sorted({rec["timestamp"] for rec in records})
+            self.assertEqual(
+                stamps,
+                [
+                    datetime(2026, 9, 12, 0, 0, 0, 400000),
+                    datetime(2026, 9, 12, 0, 0, 1, 400000),
+                    datetime(2026, 9, 12, 0, 59, 59, 400000),
+                    datetime(2026, 9, 12, 1, 0, 0, 200000),
+                ],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

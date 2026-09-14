@@ -126,6 +126,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="输出 .html 为交互报告；.png/.svg/.pdf 为静态图",
     )
 
+    repair = sub.add_parser(
+        "repair",
+        help="读取含不完整时间戳的 CSV，重建完整时间并输出新文件",
+    )
+    repair.add_argument(
+        "targets",
+        nargs="+",
+        metavar="FILE",
+        help="输入 CSV 文件路径（可多个）",
+    )
+    repair.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        metavar="OUT",
+        help="输出 CSV 路径；缺省为输入同目录 <原名>_repaired.csv",
+    )
+
     init = sub.add_parser(
         "init-config",
         help="生成 config.json 示例配置文件",
@@ -379,6 +398,21 @@ def run_plot(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_repair(args: argparse.Namespace) -> int:
+    from .plotting import load_csv_file, write_csv_file
+
+    for item in args.targets:
+        path = Path(item)
+        records = load_csv_file(path)
+        if not records:
+            print(f"{path}: 没有可修复的有效记录", file=sys.stderr)
+            return 2
+        out = args.output or path.with_name(f"{path.stem}_repaired.csv")
+        write_csv_file(records, out)
+        print(f"已修复并输出: {out} ({len(records)} 行)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -390,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_gui_command(args)
     if args.command == "plot":
         return run_plot(args)
+    if args.command == "repair":
+        return run_repair(args)
     if args.command == "init-config":
         out = write_default_config(args.path)
         print(f"已生成配置文件: {out}")
