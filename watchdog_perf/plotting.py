@@ -379,12 +379,6 @@ def write_csv_file(records: Iterable[dict], path: str | Path) -> Path:
     return path
 
 
-def _p90(values: list[float]) -> float:
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, int(math.ceil(len(ordered) * 0.9)) - 1)
-    return ordered[index]
-
-
 def _is_system_row(row: dict) -> bool:
     return (
         str(row.get(NAME_KEY, "")).upper() == "SYSTEM"
@@ -636,7 +630,6 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             if cpu_values:
                 average = sum(cpu_values) / len(cpu_values)
                 stats_parts.append(f"CPU均值 {average:.1f}%")
-                stats_parts.append(f"CPU P90 {_p90(cpu_values):.1f}%")
             if memory_values:
                 stats_parts.append(f"内存峰值 {max(memory_values):.1f} MB")
             if memory_total is not None:
@@ -700,7 +693,6 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             if total_cpu_points:
                 values = [point[1] for point in total_cpu_points]
                 stats_parts.append(f"CPU均值 {sum(values) / len(values):.1f}%")
-                stats_parts.append(f"CPU P90 {_p90(values):.1f}%")
             if total_memory_points:
                 values = [point[1] for point in total_memory_points]
                 stats_parts.append(f"内存峰值 {max(values):.1f} MB")

@@ -145,6 +145,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="输出 CSV 路径；缺省为输入同目录 <原名>_repaired.csv",
     )
 
+    merge = sub.add_parser(
+        "merge",
+        help="把多个 CSV 按时间合并为一个文件",
+    )
+    merge.add_argument(
+        "targets",
+        nargs="+",
+        metavar="FILE|DATE|DIR",
+        help="CSV 文件、目录、YYYY-MM-DD 日期或通配符",
+    )
+    merge.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        required=True,
+        metavar="OUT",
+        help="输出合并后的 CSV 路径",
+    )
+    merge.add_argument("--data-dir", type=Path, default=Path("data"))
+
     init = sub.add_parser(
         "init-config",
         help="生成 config.json 示例配置文件",
@@ -413,6 +433,25 @@ def run_repair(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_merge(args: argparse.Namespace) -> int:
+    from .plotting import load_files, resolve_input_paths, write_csv_file
+
+    paths = resolve_input_paths(args.targets, args.data_dir)
+    if not paths:
+        print(
+            "没有找到 CSV 文件。可传文件路径、目录、YYYY-MM-DD 日期或通配符。",
+            file=sys.stderr,
+        )
+        return 2
+    records, files = load_files(paths)
+    if not records:
+        print("没有可合并的有效记录", file=sys.stderr)
+        return 2
+    write_csv_file(records, args.output)
+    print(f"已合并 {len(files)} 个文件，共 {len(records)} 行 -> {args.output}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -426,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_plot(args)
     if args.command == "repair":
         return run_repair(args)
+    if args.command == "merge":
+        return run_merge(args)
     if args.command == "init-config":
         out = write_default_config(args.path)
         print(f"已生成配置文件: {out}")

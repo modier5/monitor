@@ -108,14 +108,6 @@ def _mean(values: list[float | None]) -> float:
     return sum(clean) / len(clean) if clean else 0.0
 
 
-def _p90(values: list[float | None]) -> float:
-    clean = sorted(value for value in values if value is not None)
-    if not clean:
-        return 0.0
-    index = min(len(clean) - 1, int(math.ceil(len(clean) * 0.9)) - 1)
-    return clean[index]
-
-
 def _infer_cpu_count(rows: Iterable[dict]) -> int:
     for row in rows:
         extra = _extra_pairs(str(row.get(EXTRA_KEY, "") or ""))
@@ -223,7 +215,6 @@ def _build_payload(records: Iterable[dict]) -> dict:
                 "system": False,
                 "avg_cpu": _mean(cpu_values),
                 "max_cpu": max(clean_cpu) if clean_cpu else 0.0,
-                "cpu_p90": _p90(cpu_values),
                 "avg_mem": _mean(mem_values),
                 "max_mem": max(clean_mem) if clean_mem else 0.0,
                 "cnt": len(clean_cpu),
@@ -240,7 +231,6 @@ def _build_payload(records: Iterable[dict]) -> dict:
                 "system": True,
                 "avg_cpu": _mean(sys_cpu),
                 "max_cpu": max(value or 0.0 for value in sys_cpu),
-                "cpu_p90": _p90(sys_cpu),
                 "avg_mem": _mean(sys_used),
                 "max_mem": max(value or 0.0 for value in sys_used),
                 "cnt": sum(1 for value in sys_cpu if value is not None),
@@ -297,7 +287,6 @@ def _build_table(rows: list[dict]) -> str:
         "进程",
         "平均CPU%",
         "峰值CPU%",
-        "CPU P90%",
         "平均内存MB",
         "峰值内存MB",
         "采样数",
@@ -310,7 +299,6 @@ def _build_table(rows: list[dict]) -> str:
             f"<td class='pn'>{html_mod.escape(str(row['label']))}</td>"
             f"<td>{row['avg_cpu']:.2f}</td>"
             f"<td>{row['max_cpu']:.2f}</td>"
-            f"<td>{row['cpu_p90']:.2f}</td>"
             f"<td>{row['avg_mem']:.0f}</td>"
             f"<td>{row['max_mem']:.0f}</td>"
             f"<td>{row['cnt']}</td></tr>"

@@ -202,6 +202,7 @@ class PlottingTests(unittest.TestCase):
             self.assertNotIn("cdn.jsdelivr.net", text)
             self.assertNotIn("unpkg.com", text)
             self.assertNotIn("plotly-graph-div", text)
+            self.assertNotIn("P90", text)
 
     def test_html_report_merges_repeated_exe_invocations(self) -> None:
         start = datetime(2026, 9, 9, 9, 0, 0)
