@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "appearance": "system",
     "monitoring": {
         "mode": "tree",
         "processes": [],
@@ -103,6 +104,7 @@ class DingTalkSettings:
 @dataclass
 class AppSettings:
     mode: str = "tree"
+    appearance: str = "system"
     processes: tuple[str, ...] = ()
     apps: tuple[AppTargetSettings, ...] = ()
     exe_paths: tuple[str, ...] = ()
@@ -163,6 +165,14 @@ def _as_path_list(value: Any) -> tuple[str, ...]:
                 paths.append(text)
         return tuple(paths)
     return ()
+
+
+APPEARANCE_MODES = ("system", "light", "dark")
+
+
+def _as_appearance(value: Any) -> str:
+    text = str(value or "system").strip().lower()
+    return text if text in APPEARANCE_MODES else "system"
 
 
 def _as_pid_list(value: Any) -> tuple[int, ...]:
@@ -310,6 +320,7 @@ def load_settings(config_path: str | Path | None = None) -> AppSettings:
 
     settings = AppSettings(
         mode=mode,
+        appearance=_as_appearance(raw.get("appearance")),
         processes=tuple(process_patterns),
         apps=apps,
         exe_paths=_as_path_list(monitoring.get("exe_paths")),
@@ -353,6 +364,7 @@ def settings_to_dict(settings: AppSettings) -> dict[str, Any]:
     UI and future frontends update config.json without duplicating its schema.
     """
     return {
+        "appearance": settings.appearance,
         "monitoring": {
             "mode": settings.mode,
             "processes": list(settings.processes),
@@ -404,6 +416,26 @@ def settings_to_dict(settings: AppSettings) -> dict[str, Any]:
             }
         },
     }
+
+
+def save_appearance(mode: str, path: str | Path) -> Path:
+    """Persist only the appearance preference, leaving other edits untouched."""
+    target = Path(path)
+    data: dict[str, Any] = {}
+    if target.exists():
+        try:
+            loaded = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data["appearance"] = _as_appearance(mode)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return target
 
 
 def save_settings(settings: AppSettings, path: str | Path | None = None) -> Path:

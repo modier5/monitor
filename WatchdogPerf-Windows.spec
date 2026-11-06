@@ -16,6 +16,8 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         "watchdog_perf.gui",
+        "watchdog_perf.ui_icons",
+        "matplotlib.font_manager",
         "matplotlib.backends.backend_agg",
         "matplotlib.backends.backend_pdf",
         "matplotlib.backends.backend_svg",

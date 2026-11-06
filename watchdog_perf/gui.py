@@ -25,7 +25,7 @@ import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox
 
 from .alerting import DingTalkNotifier, EndConditionMonitor
-from .config import AppSettings, ConditionRule, save_settings
+from .config import APPEARANCE_MODES, AppSettings, ConditionRule, save_appearance, save_settings
 from .metrics import machine_cpu_percent
 from .monitor import MonitorConfig, PerfMonitor
 from .storage import CsvStore, STATUS_OK
@@ -256,6 +256,8 @@ class _Dropdown(ctk.CTkFrame):
     toplevel instead, using the same palette as the rest of the window.
     """
 
+    _open_instances: list["_Dropdown"] = []
+
     def __init__(
         self,
         master,
@@ -278,6 +280,8 @@ class _Dropdown(ctk.CTkFrame):
         self._check = check
         self._popup: tk.Toplevel | None = None
         self._panel: ctk.CTkFrame | None = None
+        self._click_binding: str | None = None
+        self._escape_binding: str | None = None
         self.grid_propagate(False)
         self.grid_columnconfigure(0, weight=1)
         self._text = ctk.CTkLabel(self, text=str(variable.get()), text_color=TEXT, font=font, anchor="w")
@@ -343,21 +347,40 @@ class _Dropdown(ctk.CTkFrame):
             y = self.winfo_rooty() - height - 4
         top.geometry(f"{width}x{height}+{x}+{y}")
         top.update_idletasks()
-        top.bind("<Escape>", lambda _event: self._close())
-        top.bind("<Button-1>", self._close_if_background)
+        top.bind("<Button-1>", lambda _event: self._close())
+        panel.bind("<Button-1>", lambda _event: self._close())
         try:
-            top.grab_set()
-        except tk.TclError:
-            pass
-        try:
-            top.focus_force()
+            top.lift()
         except tk.TclError:
             pass
         self._popup, self._panel = top, panel
+        if self not in self._open_instances:
+            self._open_instances.append(self)
+        self._bind_global_dismiss()
 
-    def _close_if_background(self, event) -> None:
-        if event.widget is self._popup:
-            self._close()
+    @classmethod
+    def close_all(cls) -> None:
+        """Close every open list, e.g. before repainting for a new theme."""
+        for instance in list(cls._open_instances):
+            instance._close()
+
+    def _bind_global_dismiss(self) -> None:
+        """Close the list on any click outside it, without a modal grab.
+
+        ``grab_set`` behaves differently across window managers, so dismissal
+        is driven by a normal toplevel click binding instead.
+        """
+        toplevel = self.winfo_toplevel()
+        self._click_binding = toplevel.bind("<Button-1>", self._on_global_click, add="+")
+        self._escape_binding = toplevel.bind("<Escape>", lambda _event: self._close(), add="+")
+
+    def _on_global_click(self, event) -> None:
+        widget = event.widget
+        while widget is not None:
+            if widget is self._popup or widget is self:
+                return
+            widget = getattr(widget, "master", None)
+        self._close()
 
     def _choose(self, value: str) -> None:
         self.variable.set(value)
@@ -365,13 +388,23 @@ class _Dropdown(ctk.CTkFrame):
 
     def _close(self) -> None:
         popup, self._popup = self._popup, None
+        if self in self._open_instances:
+            self._open_instances.remove(self)
         self._panel = None
+        toplevel = self.winfo_toplevel()
+        for sequence, funcid in (
+            ("<Button-1>", self._click_binding),
+            ("<Escape>", self._escape_binding),
+        ):
+            if funcid:
+                try:
+                    toplevel.unbind(sequence, funcid)
+                except tk.TclError:
+                    pass
+        self._click_binding = None
+        self._escape_binding = None
         if popup is None:
             return
-        try:
-            popup.grab_release()
-        except tk.TclError:
-            pass
         try:
             popup.destroy()
         except tk.TclError:
@@ -855,7 +888,59 @@ class WatchdogGui:
         )
         self.config_sync_label.grid(row=1, column=0, sticky="w", padx=14, pady=(4, 0))
         self.sidebar_count = self._label(footer, "", size=11, color=SIDEBAR_MUTED)
-        self.sidebar_count.grid(row=2, column=0, sticky="w", padx=14, pady=(2, 14))
+        self.sidebar_count.grid(row=2, column=0, sticky="w", padx=14, pady=(2, 0))
+
+        divider = ctk.CTkFrame(footer, fg_color=SIDEBAR_LINE, height=1, corner_radius=0)
+        divider.grid(row=3, column=0, sticky="ew", padx=14, pady=(10, 8))
+        self._label(footer, "外观", size=10, color=SIDEBAR_MUTED).grid(
+            row=4, column=0, sticky="w", padx=14
+        )
+        switcher = ctk.CTkFrame(footer, fg_color=SIDEBAR_CARD, corner_radius=0)
+        switcher.grid(row=5, column=0, sticky="ew", padx=10, pady=(6, 12))
+        for column in range(3):
+            switcher.grid_columnconfigure(column, weight=1, uniform="appearance")
+        self._appearance_buttons: dict[str, ctk.CTkButton] = {}
+        for column, (key, text) in enumerate(
+            (("light", "浅色"), ("dark", "深色"), ("system", "跟随"))
+        ):
+            button = ctk.CTkButton(
+                switcher,
+                text=text,
+                height=26,
+                corner_radius=8,
+                fg_color=SIDEBAR_CARD,
+                hover_color=SIDEBAR_HOVER,
+                text_color=SIDEBAR_TEXT,
+                font=self._font(11),
+                command=lambda mode=key: self._set_appearance(mode),
+            )
+            button.grid(row=0, column=column, sticky="ew", padx=2)
+            self._appearance_buttons[key] = button
+        self._sync_appearance_buttons()
+
+    def _sync_appearance_buttons(self) -> None:
+        for key, button in self._appearance_buttons.items():
+            active = key == self.app_settings.appearance
+            button.configure(
+                fg_color=NAV_ACTIVE_BG if active else SIDEBAR_CARD,
+                hover_color=NAV_ACTIVE_BG if active else SIDEBAR_HOVER,
+                text_color=WHITE if active else SIDEBAR_TEXT,
+                font=self._font(11, "bold" if active else "normal"),
+            )
+
+    def _set_appearance(self, mode: str) -> None:
+        if mode not in APPEARANCE_MODES:
+            mode = "system"
+        _Dropdown.close_all()
+        self.app_settings.appearance = mode
+        ctk.set_appearance_mode(mode)
+        self._sync_appearance_buttons()
+        config_path = self.app_settings.config_path
+        if config_path is not None:
+            try:
+                save_appearance(mode, config_path)
+            except OSError:
+                pass
 
     def _nav_item(self, parent, row: int, key: str, icon_name: str, text: str) -> None:
         frame = ctk.CTkFrame(parent, fg_color=SIDEBAR_BG, corner_radius=11, height=46)
@@ -2059,7 +2144,10 @@ def run_gui(
     backup_keep: int = 3,
     app_settings: AppSettings | None = None,
 ) -> None:
-    ctk.set_appearance_mode("system")
+    appearance = "system"
+    if app_settings is not None:
+        appearance = app_settings.appearance if app_settings.appearance in APPEARANCE_MODES else "system"
+    ctk.set_appearance_mode(appearance)
     ctk.set_default_color_theme("blue")
     root = ctk.CTk()
     WatchdogGui(

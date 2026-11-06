@@ -4,6 +4,33 @@ from __future__ import annotations
 
 import psutil
 
+# One shared series palette so the desktop JSON/PNG/SVG exports and the
+# interactive HTML report keep the same colours for the same series.
+SERIES_PALETTE = (
+    "#0FA396",
+    "#4C8DE6",
+    "#8E7CF0",
+    "#E0A33E",
+    "#D2687A",
+    "#3FB1C8",
+    "#7BA65A",
+    "#A07CC9",
+    "#E9825B",
+    "#5B8FA8",
+    "#C97FA8",
+    "#C9A227",
+    "#6E8B9E",
+    "#8FA6C4",
+    "#B57EDC",
+    "#D08C60",
+)
+
+# Chart chrome shared by the HTML and matplotlib renderers.
+CHART_INK = "#0F1829"
+CHART_MUTED = "#55647C"
+CHART_GRID = "#E7ECF3"
+CHART_ACCENT = "#0FA396"
+
 
 def machine_cpu_percent(
     core_percent_sum: float | None,

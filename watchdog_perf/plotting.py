@@ -508,6 +508,42 @@ def _downsample_lists(
     return times[::step], values[::step]
 
 
+# Shared chart chrome: the PNG/SVG/PDF export, the interactive HTML report and
+# the desktop window are tuned to the same palette and type scale.
+CHART_TEXT = "#0F1829"
+CHART_MUTED = "#55647C"
+CHART_GRID = "#E7ECF3"
+CHART_SURFACE = "#FFFFFF"
+CHART_PAGE = "#F4F6FB"
+CHART_SYSTEM = "#0F1829"
+CHART_ACCENT = "#0FA396"
+
+
+def _apply_chart_fonts(matplotlib) -> None:
+    """Pick the first installed CJK-capable UI font per platform."""
+    candidates = [
+        "Microsoft YaHei UI",
+        "Microsoft YaHei",
+        "PingFang SC",
+        "Hiragino Sans GB",
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "SimHei",
+        "Arial Unicode MS",
+        "sans-serif",
+    ]
+    try:
+        from matplotlib import font_manager
+
+        installed = {font.name for font in font_manager.fontManager.ttflist}
+        chosen = [name for name in candidates if name in installed] or ["sans-serif"]
+        matplotlib.rcParams["font.family"] = "sans-serif"
+        matplotlib.rcParams["font.sans-serif"] = chosen
+        matplotlib.rcParams["axes.unicode_minus"] = False
+    except Exception:
+        pass
+
+
 def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     """Build a dual-axis figure. Left: CPU%; right: memory MB."""
     import matplotlib
@@ -515,16 +551,9 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
-    try:
-        matplotlib.rcParams["font.sans-serif"] = [
-            "Microsoft YaHei",
-            "SimHei",
-            "Arial Unicode MS",
-            "sans-serif",
-        ]
-        matplotlib.rcParams["axes.unicode_minus"] = False
-    except Exception:
-        pass
+    from .metrics import SERIES_PALETTE
+
+    _apply_chart_fonts(matplotlib)
 
     rows = sorted(records, key=lambda rec: rec[TIMESTAMP_KEY])
     if not rows:
@@ -539,7 +568,8 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
 
     fig, ax_cpu = plt.subplots(figsize=(12, 6.2), dpi=110)
     ax_mem = ax_cpu.twinx()
-    fig.subplots_adjust(top=0.84, right=0.86)
+    fig.patch.set_facecolor(CHART_SURFACE)
+    fig.subplots_adjust(top=0.82, right=0.88, left=0.07, bottom=0.22)
 
     start_dt: datetime = rows[0][TIMESTAMP_KEY]
     end_dt: datetime = rows[-1][TIMESTAMP_KEY]
@@ -549,7 +579,7 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
     else:
         date_fmt = "%m-%d %H:%M"
 
-    colors = plt.get_cmap("tab20").colors
+    colors = SERIES_PALETTE
     series_text: list[str] = []
     process_handles: list[Line2D] = []
     total_line_added = False
@@ -611,8 +641,9 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
                 [p[0] for p in points],
                 [p[1] for p in points],
                 color=color,
-                linewidth=1.0,
+                linewidth=1.3,
                 label=label,
+                solid_capstyle="round",
             )
         if memory_points:
             points = _downsample(memory_points)
@@ -620,9 +651,9 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
                 [p[0] for p in points],
                 [p[1] for p in points],
                 color=color,
-                linewidth=1.0,
-                linestyle="--",
-                alpha=0.85,
+                linewidth=1.2,
+                linestyle=(0, (5, 3)),
+                alpha=0.9,
             )
 
         if cpu_values or memory_values:
@@ -654,10 +685,11 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             ax_mem.plot(
                 [first_x, last_x],
                 [memory_total, memory_total],
-                color="#8c564b",
-                linestyle="-.",
-                linewidth=1.0,
-                alpha=0.7,
+                color=CHART_GRID,
+                linestyle=(0, (1, 2)),
+                linewidth=1.1,
+                alpha=1.0,
+                zorder=0,
             )
             total_line_added = True
 
@@ -674,9 +706,10 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
                 ax_cpu.plot(
                     [p[0] for p in points],
                     [p[1] for p in points],
-                    color="#111111",
-                    linewidth=1.5,
-                    alpha=0.9,
+                    color=CHART_SYSTEM,
+                    linewidth=2.2,
+                    linestyle=(0, (6, 3)),
+                    alpha=1.0,
                     label=label,
                 )
             if total_memory_points:
@@ -684,10 +717,10 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
                 ax_mem.plot(
                     [p[0] for p in points],
                     [p[1] for p in points],
-                    color="#111111",
-                    linewidth=1.5,
-                    linestyle="--",
-                    alpha=0.9,
+                    color=CHART_SYSTEM,
+                    linewidth=2.0,
+                    linestyle=(0, (6, 3)),
+                    alpha=1.0,
                 )
             stats_parts = []
             if total_cpu_points:
@@ -699,20 +732,20 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             if stats_parts:
                 series_text.insert(0, f"{label}: {' / '.join(stats_parts)}")
                 process_handles.append(
-                    Line2D([], [], color="#111111", linewidth=1.5, label=label)
+                    Line2D([], [], color=CHART_SYSTEM, linewidth=2.0, label=label)
                 )
 
     if process_handles:
         process_handles.append(
-            Line2D([], [], color="#555555", linewidth=1.0, label="CPU (左轴)")
+            Line2D([], [], color=CHART_MUTED, linewidth=1.3, label="CPU (左轴)")
         )
         process_handles.append(
             Line2D(
                 [],
                 [],
-                color="#555555",
-                linewidth=1.0,
-                linestyle="--",
+                color=CHART_MUTED,
+                linewidth=1.2,
+                linestyle=(0, (5, 3)),
                 label="内存 (右轴)",
             )
         )
@@ -721,28 +754,31 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
                 Line2D(
                     [],
                     [],
-                    color="#8c564b",
-                    linestyle="-.",
-                    linewidth=1.0,
+                    color=CHART_GRID,
+                    linestyle=(0, (1, 2)),
+                    linewidth=1.1,
                     label="内存总量 (右轴)",
                 )
             )
         ax_cpu.legend(
             handles=process_handles,
-            loc="upper center",
-            bbox_to_anchor=(0.5, -0.11),
-            ncol=min(3, max(2, len(process_handles))),
-            fontsize=8,
+            loc="upper left",
+            bbox_to_anchor=(0.0, -0.14),
+            ncol=min(4, max(2, len(process_handles))),
+            fontsize=8.5,
             frameon=False,
+            handlelength=1.8,
+            columnspacing=1.4,
+            labelcolor=CHART_MUTED,
         )
 
     for event_dt in exit_events:
         ax_cpu.axvline(
             mdates.date2num(event_dt),
-            color="#d62728",
-            linestyle=":",
+            color="#D2687A",
+            linestyle=(0, (2, 2)),
             linewidth=0.9,
-            alpha=0.65,
+            alpha=0.8,
             zorder=0,
         )
 
@@ -757,16 +793,32 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
             transform=ax_cpu.transAxes,
             verticalalignment="top",
             fontsize=8,
-            bbox={"facecolor": "white", "edgecolor": "#cccccc", "alpha": 0.78, "pad": 4},
+            color=CHART_MUTED,
+            linespacing=1.6,
+            bbox={
+                "facecolor": CHART_SURFACE,
+                "edgecolor": CHART_GRID,
+                "alpha": 0.92,
+                "pad": 7,
+                "boxstyle": "round,pad=0.55,rounding_size=0.6",
+            },
             zorder=5,
         )
 
-    ax_cpu.set_xlabel("时间")
-    ax_cpu.set_ylabel("CPU 占用率 (%)")
-    ax_mem.set_ylabel("内存 (MB)")
+    ax_cpu.set_xlabel("时间", color=CHART_MUTED, fontsize=9.5)
+    ax_cpu.set_ylabel("CPU 占用率 (%)", color=CHART_ACCENT, fontsize=9.5)
+    ax_mem.set_ylabel("内存 (MB)", color=CHART_MUTED, fontsize=9.5)
     ax_cpu.set_zorder(ax_mem.get_zorder() + 1)
     ax_cpu.patch.set_visible(False)
-    ax_cpu.grid(True, linestyle=":", alpha=0.35)
+    ax_mem.patch.set_visible(False)
+    ax_cpu.set_facecolor(CHART_SURFACE)
+    ax_mem.set_facecolor("none")
+    ax_cpu.grid(True, linestyle=(0, (3, 4)), color=CHART_GRID, linewidth=0.8, alpha=1.0)
+    ax_cpu.set_axisbelow(True)
+    for axis in (ax_cpu, ax_mem):
+        for side in ("top", "right", "left", "bottom"):
+            axis.spines[side].set_visible(False)
+        axis.tick_params(colors=CHART_MUTED, labelsize=9, length=0, pad=6)
     ax_cpu.set_ylim(0, 100)
     ax_mem.set_ylim(0, _memory_axis_upper(rows))
     first_x = mdates.date2num(start_dt)
@@ -783,9 +835,20 @@ def make_figure(records: Iterable[dict], title: str | None = None) -> Figure:
 
     heading = title or f"进程性能回溯 · {len(groups)} 个进程序列"
     fig.suptitle(
-        f"{heading}\n样本数 {len(rows)} | 起止 {start_dt:%Y-%m-%d %H:%M:%S} ~ {end_dt:%Y-%m-%d %H:%M:%S}",
-        fontsize=10,
+        heading,
+        fontsize=13.5,
         fontweight="bold",
+        color=CHART_TEXT,
+        x=0.07,
+        ha="left",
+    )
+    fig.text(
+        0.07,
+        0.885,
+        f"样本数 {len(rows)}    ·    起止 {start_dt:%Y-%m-%d %H:%M:%S} ~ {end_dt:%Y-%m-%d %H:%M:%S}",
+        fontsize=8.5,
+        color=CHART_MUTED,
+        ha="left",
     )
     return fig
 

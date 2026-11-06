@@ -3,8 +3,23 @@
 Windows / macOS 长时进程性能监控与回溯工具。持续采集指定进程（或系统全局）的 CPU 与内存数据，并采用**逐行追加 + 立即 flush** 的方式写入按监控会话滚动的 CSV，尽量降低死机或强制结束进程时的数据丢失；之后可离线加载历史文件生成可缩放、可平移的交互 HTML 图表。
 
 桌面端采用深色导航栏 + 浅色（或深色）内容区的现代界面：圆角面板、翡翠绿强调色、
-平台原生字体（Windows 用微软雅黑 UI，macOS 用苹方 PingFang SC），并适配系统明暗主题。
+平台原生字体（Windows 用微软雅黑 UI，macOS 用苹方 PingFang SC）。**外观可在应用内切换**
+（侧栏底部「浅色 / 深色 / 跟随系统」，默认跟随系统），选择会写回 `config.json`。
 界面使用 CustomTkinter，打包产物已内置该依赖。
+
+## 下载与安装
+
+从 [Releases](https://github.com/modier5/monitor/releases) 下载对应系统的压缩包，
+**解压一次即可**（压缩包内直接就是程序目录，不是“压缩包里再套一个压缩包”）：
+
+- Windows x64：`WatchdogPerf-Windows-x64.zip` → 解压得到 `WatchdogPerf/`，双击里面的
+  `WatchdogPerf.exe`（无需安装 Python）
+- Apple Silicon（M1/M2/M3/M4 等）：`WatchdogPerf-macOS-arm64.zip` → 解压得到
+  `WatchdogPerf.app`，拖入“应用程序”即可
+- Intel Mac：`WatchdogPerf-macOS-x86_64.zip`
+
+> 仓库的 Actions → Artifacts 里也能下载，但 GitHub 会给所有产物再套一层 zip；
+> 面向使用者分发请用 Releases 页面的附件。
 
 ## macOS 开箱即用版
 
@@ -63,6 +78,9 @@ App Sandbox，因为它需要读取当前用户启动的其他进程；通常不
 - **采集与存储**：设置采样间隔、是否包含子进程、CSV 保存目录、落盘和备份策略；
 - **结束条件**：设置 CPU/内存阈值、规则组合方式、持续时间、目标退出条件和触发动作；
 - **通知设置**：配置钉钉机器人 Webhook、Secret 和请求超时。
+
+侧栏底部有「浅色 / 深色 / 跟随系统」外观开关，默认跟随系统；切换后会立刻生效并
+写入 `config.json` 的 `appearance` 字段，下次启动保持上次的选择。
 
 修改后点击“保存配置”会立即写入当前用户的 `config.json`；点击“保存并开始”会先校验并
 保存全部界面设置，再启动监控。Windows 桌面包默认保存到：
@@ -263,6 +281,9 @@ python -m watchdog_perf plot "data\Monitor_2026-09-*.csv"
 ```
 
 默认会在 `data/reports/` 生成 ECharts 交互 HTML 并用浏览器打开：页面包含卡片摘要、CPU/内存两个独立图表面板，以及不依赖 JS 的静态统计表。
+**报告与桌面端使用同一套视觉**（同样的翡翠绿配色、圆角卡片、微软雅黑 UI / 苹方字体），
+并随浏览器/系统的浅色或深色外观自动切换；静态 PNG/SVG/PDF 导出也用同一套调色板，
+因此同一个进程在 GUI、HTML 报告和导出的图片里颜色保持一致。
 
 保存交互 HTML 报告：
 
@@ -423,4 +444,11 @@ python -m PyInstaller --noconfirm --clean WatchdogPerf-Windows.spec
 
 推送 `v*` 标签后，GitHub Actions 会自动运行 `Build Windows app` 和
 `Build macOS app`：生成 Windows x64、macOS Apple Silicon 和 macOS Intel 三种
-无需 Python 的压缩包，可在对应 Actions 运行页底部的 Artifacts 下载。
+无需 Python 的压缩包。
+
+- **GitHub Releases（推荐，单层压缩包）**：打 tag 时两个工作流会把三个压缩包作为
+  Release 附件自动上传，使用者下载后解压一次即可；Windows 包内是 `WatchdogPerf/`
+  目录，macOS 包内是 `WatchdogPerf.app`。
+- **Actions → Artifacts（CI 自用）**：GitHub 会给每个产物再套一层 zip。Windows 产物
+  已改为上传解压后的目录，所以只需解压一次就能得到 `WatchdogPerf/`；macOS 因为
+  `.app` 内含符号链接，必须保留 `ditto` 生成的 zip，请优先使用 Releases。

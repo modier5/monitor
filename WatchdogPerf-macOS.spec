@@ -16,6 +16,8 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         "watchdog_perf.gui",
+        "watchdog_perf.ui_icons",
+        "matplotlib.font_manager",
         "matplotlib.backends.backend_agg",
         "matplotlib.backends.backend_pdf",
         "matplotlib.backends.backend_svg",
@@ -66,7 +68,7 @@ app = BUNDLE(
     info_plist={
         "CFBundleDisplayName": "WatchdogPerf",
         "CFBundleName": "WatchdogPerf",
-        "CFBundleShortVersionString": "0.5.3",
+        "CFBundleShortVersionString": "0.5.4",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
     },

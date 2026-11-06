@@ -6,6 +6,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-2025
@@ -30,11 +33,33 @@ jobs:
           if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*psutil*")) { throw "psutil is missing" }
           if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*customtkinter*")) { throw "CustomTkinter is missing" }
           if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "echarts.min.js")) { throw "ECharts is missing" }
+      # The downloadable release asset is one zip that already contains the
+      # WatchdogPerf/ folder, so users extract it exactly once.
       - name: Package application
         shell: pwsh
-        run: Compress-Archive -Path "dist/WatchdogPerf" -DestinationPath "dist/WatchdogPerf-Windows-x64.zip"
+        run: Compress-Archive -Path "dist/WatchdogPerf" -DestinationPath "dist/WatchdogPerf-Windows-x64.zip" -Force
+      # CI artifacts are zipped again by upload-artifact, so the unpacked
+      # folder is uploaded instead of the zip: one extraction, no nesting.
+      - name: Stage single-extraction artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/artifact" | Out-Null
+          Copy-Item -Path "dist/WatchdogPerf" -Destination "dist/artifact/WatchdogPerf" -Recurse -Force
       - uses: actions/upload-artifact@v4
         with:
           name: WatchdogPerf-Windows-x64
-          path: dist/WatchdogPerf-Windows-x64.zip
+          path: dist/artifact
           if-no-files-found: error
+      - name: Publish release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "WatchdogPerf $tag" --generate-notes
+            Start-Sleep -Seconds 3
+          }
+          gh release upload $tag "dist/WatchdogPerf-Windows-x64.zip" --clobber

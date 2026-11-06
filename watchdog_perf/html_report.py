@@ -13,7 +13,7 @@ from typing import Iterable
 
 import psutil
 
-from .metrics import machine_cpu_percent
+from .metrics import SERIES_PALETTE, machine_cpu_percent
 
 TS_KEY = "timestamp"
 NAME_KEY = "process_name"
@@ -26,24 +26,7 @@ EXTRA_KEY = "extra"
 STATUS_OK = 0
 MAX_POINTS = 4000
 
-PALETTE = [
-    "#5B8FF9",
-    "#61DDAA",
-    "#65789B",
-    "#F6BD16",
-    "#7262FD",
-    "#78D3F8",
-    "#9661BC",
-    "#F6903D",
-    "#008685",
-    "#F08BB4",
-    "#8C7E68",
-    "#C23531",
-    "#2F4554",
-    "#61A0A8",
-    "#D48265",
-    "#749F83",
-]
+PALETTE = list(SERIES_PALETTE)
 
 _ECHARTS_FILE = Path(__file__).with_name("report_assets") / "echarts.min.js"
 _echarts_js: str | None = None
@@ -329,6 +312,7 @@ def _render_html(payload: dict, title: str) -> str:
         "__TITLE__": html_mod.escape(title),
         "__DATA_JSON__": data_json,
         "__CONFIG_JSON__": config,
+        "__PALETTE__": json.dumps(PALETTE),
         "__POINTS__": str(payload["rawPoints"]),
         "__DURATION__": f"{payload['durationSec'] / 60.0:.1f}",
         "__PROCESS_COUNT__": str(
@@ -352,59 +336,138 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Watchdog-Perf 监控报告</title>
 <style>
-  body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; margin: 0; background: #f5f6f8; color: #1f2329; }
-  .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  .sub { color: #6b7280; font-size: 13px; margin-bottom: 20px; line-height: 1.7; }
-  .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
-  .card { flex: 1; min-width: 150px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 16px; }
-  .card .v { font-size: 22px; font-weight: 600; }
-  .card .k { font-size: 12px; color: #6b7280; margin-top: 2px; }
-  .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
-  .panel h2 { font-size: 16px; margin: 0 0 10px; }
-  .chart { width: 100%; height: 480px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th, td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: right; }
-  th { background: #fafafa; }
-  td.pn { text-align: left; }
-  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  .err { display: none; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
-  @media (max-width: 800px) { .two { grid-template-columns: 1fr; } .chart { height: 380px; } }
+  :root {
+    color-scheme: light dark;
+    --bg: #F4F6FB; --panel: #FFFFFF; --panel-alt: #EFF3F9; --border: #E2E8F2;
+    --text: #0F1829; --muted: #55647C; --faint: #8090A6;
+    --accent: #0FA396; --accent-soft: #E2F6F2; --accent-ink: #0A6B63;
+    --sys: #0F1829; --grid: #E7ECF3; --shadow: 0 10px 30px rgba(28, 42, 67, .07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #090D15; --panel: #121A27; --panel-alt: #0D1520; --border: #1E2938;
+      --text: #F2F6FC; --muted: #95A4B9; --faint: #7C8CA1;
+      --accent: #0FA396; --accent-soft: #10302F; --accent-ink: #6FE3D2;
+      --sys: #E8EEF7; --grid: #1B2634; --shadow: 0 14px 36px rgba(0, 0, 0, .35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 32px 24px 56px; }
+  .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 26px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .mark {
+    width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center;
+    background: linear-gradient(145deg, #2BD1BD, #1C7CD0);
+    box-shadow: 0 10px 24px rgba(26, 184, 174, .28);
+  }
+  .mark svg { width: 24px; height: 24px; }
+  h1 { font-size: 24px; font-weight: 600; margin: 0 0 5px; letter-spacing: .2px; }
+  .sub { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; font-weight: 600; white-space: nowrap;
+  }
+  .pill i { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .cards { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .card .k { font-size: 11px; color: var(--muted); }
+  .card .v { font-size: 26px; font-weight: 600; margin-top: 8px; letter-spacing: .3px; }
+  .card .v small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    padding: 22px 24px; margin-bottom: 18px; box-shadow: var(--shadow);
+  }
+  .panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .panel .hint { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+  .chart { width: 100%; height: 460px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { padding: 9px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  th { font-size: 11px; font-weight: 500; color: var(--muted); }
+  th:first-child, td.pn { text-align: left; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover td { background: var(--panel-alt); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .two h3 { font-size: 13px; font-weight: 600; margin: 0 0 10px; color: var(--muted); }
+  .err {
+    display: none; background: var(--accent-soft); border: 1px solid var(--accent);
+    color: var(--accent-ink); padding: 10px 14px; border-radius: 12px; margin-bottom: 12px; font-size: 12px;
+  }
+  footer { margin-top: 6px; color: var(--faint); font-size: 11px; line-height: 1.8; }
+  @media (max-width: 980px) {
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .two { grid-template-columns: 1fr; }
+    .chart { height: 380px; }
+  }
+  @media (max-width: 560px) {
+    .cards { grid-template-columns: 1fr; }
+    .hero { display: block; }
+    .pill { margin-top: 12px; }
+    .wrap { padding: 20px 14px 40px; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>进程资源监控报告</h1>
-  <div class="sub">
-    数据范围：__TITLE__<br>
-    时间范围由 CSV 实际记录确定；进程 CPU 已按逻辑核数归一化，整机占用范围 0-100%。
-  </div>
-  <div class="cards">
-    <div class="card"><div class="v">__POINTS__</div><div class="k">采样点数</div></div>
-    <div class="card"><div class="v">__DURATION__</div><div class="k">监控时长（分钟）</div></div>
-    <div class="card"><div class="v">__PROCESS_COUNT__</div><div class="k">监控进程数</div></div>
-    <div class="card"><div class="v">__CPU_AVG__%</div><div class="k">整机平均 CPU</div></div>
-    <div class="card"><div class="v">__MEM_PEAK__%</div><div class="k">整机内存峰值占用</div></div>
-  </div>
-  <div class="panel">
-    <h2>CPU 占用率随时间变化（%）</h2>
+  <header class="hero">
+    <div class="brand">
+      <span class="mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.6 12h4.2l2.5-6.6 4 13.2 2.4-6.6h5.7"/>
+        </svg>
+      </span>
+      <div>
+        <h1>进程资源监控报告</h1>
+        <p class="sub">
+          数据范围：__TITLE__<br>
+          进程 CPU 已按逻辑核数归一化，整机占用范围 0&ndash;100%。
+        </p>
+      </div>
+    </div>
+    <span class="pill"><i></i>离线本地报告</span>
+  </header>
+
+  <section class="cards">
+    <div class="card"><div class="k">采样点数</div><div class="v">__POINTS__</div></div>
+    <div class="card"><div class="k">监控时长</div><div class="v">__DURATION__<small>分钟</small></div></div>
+    <div class="card"><div class="k">监控进程数</div><div class="v">__PROCESS_COUNT__</div></div>
+    <div class="card"><div class="k">整机平均 CPU</div><div class="v">__CPU_AVG__<small>%</small></div></div>
+    <div class="card"><div class="k">整机内存峰值</div><div class="v">__MEM_PEAK__<small>%</small></div></div>
+  </section>
+
+  <section class="panel">
+    <h2>CPU 占用率随时间变化</h2>
+    <p class="hint">悬停查看数值，滚轮或底部滑条缩放时间轴；虚线为整机占用。</p>
     <div class="err" id="errCpu">图表库加载失败：下方静态摘要表仍可查看核心数据。</div>
     <div class="chart" id="chartCpu"></div>
-  </div>
-  <div class="panel">
-    <h2>内存占用随时间变化（MB）</h2>
+  </section>
+
+  <section class="panel">
+    <h2>内存占用随时间变化</h2>
+    <p class="hint">横向虚线为系统总内存，纵轴按本机物理内存上限显示。</p>
     <div class="err" id="errMem">图表库加载失败：下方静态摘要表仍可查看核心数据。</div>
     <div class="chart" id="chartMem"></div>
-  </div>
-  <div class="panel">
-    <h2>进程占用排行（静态摘要）</h2>
+  </section>
+
+  <section class="panel">
+    <h2>进程占用排行</h2>
+    <p class="hint">不依赖脚本的静态摘要，便于直接复制或打印。</p>
     <div class="two">
-      <div><h3 style="font-size:14px;margin:4px 0 8px;">按平均 CPU 排序 Top 12</h3>__TOP_CPU__</div>
-      <div><h3 style="font-size:14px;margin:4px 0 8px;">按峰值内存排序 Top 12</h3>__TOP_MEM__</div>
+      <div><h3>按平均 CPU 排序 Top 12</h3>__TOP_CPU__</div>
+      <div><h3>按峰值内存排序 Top 12</h3>__TOP_MEM__</div>
     </div>
-  </div>
+  </section>
+
+  <footer>由 WatchdogPerf 生成。图表为离线 ECharts，不依赖网络；页面会随系统浅色 / 深色外观自动切换。</footer>
 </div>
-<script>var DATA = __DATA_JSON__; var CFG = __CONFIG_JSON__;</script>
+<script>var DATA = __DATA_JSON__; var CFG = __CONFIG_JSON__; var SERIES_COLORS = __PALETTE__;</script>
 <script>__ECHARTS_JS__</script>
 <script>
 (function () {
@@ -413,66 +476,108 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     document.getElementById('errMem').style.display = 'block';
     return;
   }
-  function lineSeries(list, sysName, sysData, sysStyle) {
+  var root = document.documentElement;
+  function css(name) { return getComputedStyle(root).getPropertyValue(name).trim(); }
+  function baseAxis(kind) {
+    var text = css('--text'), muted = css('--muted'), grid = css('--grid');
+    return {
+      textStyle: { fontFamily: '"Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif', color: text },
+      tooltip: {
+        trigger: 'axis', confine: true, padding: [8, 12],
+        backgroundColor: css('--panel'), borderColor: css('--border'), borderWidth: 1,
+        textStyle: { fontSize: 12, color: text },
+        extraCssText: 'border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);'
+      },
+      legend: {
+        type: 'scroll', top: 2, itemWidth: 16, itemHeight: 8,
+        textStyle: { fontSize: 11, color: muted }, pageTextStyle: { color: muted }
+      },
+      grid: { left: kind === 'mem' ? 72 : 58, right: 24, top: 60, bottom: 68, containLabel: true },
+      xAxis: {
+        type: 'category', boundaryGap: false, data: DATA.axis,
+        axisLine: { lineStyle: { color: grid } },
+        axisTick: { show: false },
+        axisLabel: { color: muted, fontSize: 11, hideOverlap: true }
+      },
+      dataZoom: [
+        { type: 'inside' },
+        {
+          type: 'slider', height: 18, bottom: 12,
+          borderColor: grid, backgroundColor: 'transparent',
+          fillerColor: 'rgba(15,163,150,.12)',
+          handleStyle: { color: css('--accent') },
+          moveHandleStyle: { color: css('--accent') },
+          textStyle: { fontSize: 10, color: muted }
+        }
+      ]
+    };
+  }
+  function series(list, sysName, sysData, extra) {
     var out = [];
     for (var i = 0; i < list.length; i++) {
       var s = list[i];
       out.push({
         name: s.name, type: 'line', data: s.data, symbol: 'none', connectNulls: false,
-        lineStyle: { width: 1.3, color: s.color },
-        itemStyle: { color: s.color },
-        emphasis: { lineStyle: { width: 2.6 } }
+        lineStyle: { width: 1.4, color: s.color }, itemStyle: { color: s.color },
+        emphasis: { focus: 'series', lineStyle: { width: 2.8 } }
       });
     }
     out.push({
       name: sysName, type: 'line', data: sysData, symbol: 'none', connectNulls: false,
-      lineStyle: { width: 2.6, type: 'dashed', color: '#111827' },
-      itemStyle: { color: '#111827' }, z: 99
+      lineStyle: { width: 2.6, type: 'dashed', color: css('--sys') },
+      itemStyle: { color: css('--sys') }, z: 99
     });
-    if (sysStyle) out.push(sysStyle);
+    if (extra) out.push(extra);
     return out;
   }
-  var tooltip = {
-    trigger: 'axis',
-    triggerOn: 'mousemove|click',
-    confine: true,
-    textStyle: { fontSize: 11, lineHeight: 16 },
-    padding: [6, 10]
-  };
+  function cpuOption() {
+    var opt = baseAxis('cpu');
+    opt.color = SERIES_COLORS;
+    opt.yAxis = {
+      type: 'value', min: 0, max: CFG.cpuMax, name: '%',
+      nameTextStyle: { color: css('--muted'), fontSize: 11, align: 'left' },
+      axisLabel: { color: css('--muted'), fontSize: 11 },
+      splitLine: { lineStyle: { type: 'dashed', color: css('--grid') } }
+    };
+    opt.series = series(DATA.cpuSeries, DATA.sysCpuName, DATA.sysCpu, null);
+    return opt;
+  }
+  function memOption() {
+    var opt = baseAxis('mem');
+    opt.color = SERIES_COLORS;
+    opt.yAxis = {
+      type: 'value', min: 0,
+      max: Math.ceil(CFG.memoryTotal / 1024) * 1024,
+      name: 'MB',
+      nameTextStyle: { color: css('--muted'), fontSize: 11, align: 'left' },
+      axisLabel: {
+        color: css('--muted'), fontSize: 11,
+        formatter: function (value) { return value.toLocaleString(); }
+      },
+      splitLine: { lineStyle: { type: 'dashed', color: css('--grid') } }
+    };
+    var totalLine = {
+      name: '系统总内存', type: 'line', symbol: 'none', data: [],
+      markLine: {
+        symbol: 'none', silent: true,
+        lineStyle: { type: 'dotted', color: css('--grid'), width: 1 },
+        label: { color: css('--muted'), fontSize: 10 },
+        data: [{ yAxis: CFG.memoryTotal, name: '系统总内存' }]
+      }
+    };
+    opt.series = series(DATA.memSeries, DATA.sysMemName, DATA.sysUsed, totalLine);
+    return opt;
+  }
   var cpuChart = echarts.init(document.getElementById('chartCpu'));
-  cpuChart.setOption({
-    color: ['#5B8FF9', '#61DDAA', '#65789B', '#F6BD16', '#7262FD', '#78D3F8', '#9661BC', '#F6903D'],
-    tooltip: tooltip,
-    legend: { type: 'scroll', top: 6, itemWidth: 14, itemHeight: 8, textStyle: { fontSize: 11, color: '#555' } },
-    grid: { left: 64, right: 24, top: 64, bottom: 70, containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: DATA.axis,
-             axisLabel: { color: '#555', fontSize: 11, hideOverlap: true } },
-    yAxis: { type: 'value', min: 0, max: CFG.cpuMax, name: 'CPU 占用率（%）',
-             axisLabel: { color: '#555', fontSize: 11 },
-             splitLine: { lineStyle: { type: 'dashed', color: '#e5e7eb' } } },
-    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 18, bottom: 14, borderColor: '#d1d5db', textStyle: { fontSize: 10 } }],
-    series: lineSeries(DATA.cpuSeries, DATA.sysCpuName, DATA.sysCpu, null)
-  });
   var memChart = echarts.init(document.getElementById('chartMem'));
-  var totalLine = {
-    name: '系统总内存', type: 'line', symbol: 'none', data: [],
-    markLine: { symbol: 'none', silent: true,
-      lineStyle: { type: 'dotted', color: '#d1d5db', width: 1 },
-      data: [{ yAxis: CFG.memoryTotal, name: '系统总内存' }] }
-  };
-  memChart.setOption({
-    color: ['#5B8FF9', '#61DDAA', '#65789B', '#F6BD16', '#7262FD', '#78D3F8', '#9661BC', '#F6903D'],
-    tooltip: tooltip,
-    legend: { type: 'scroll', top: 6, itemWidth: 14, itemHeight: 8, textStyle: { fontSize: 11, color: '#555' } },
-    grid: { left: 78, right: 24, top: 64, bottom: 70, containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: DATA.axis,
-             axisLabel: { color: '#555', fontSize: 11, hideOverlap: true } },
-    yAxis: { type: 'value', min: 0, max: CFG.memoryTotal, name: '内存（MB）',
-             axisLabel: { color: '#555', fontSize: 11 },
-             splitLine: { lineStyle: { type: 'dashed', color: '#e5e7eb' } } },
-    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 18, bottom: 14, borderColor: '#d1d5db', textStyle: { fontSize: 10 } }],
-    series: lineSeries(DATA.memSeries, DATA.sysMemName, DATA.sysUsed, totalLine)
-  });
+  function render() {
+    cpuChart.setOption(cpuOption(), true);
+    memChart.setOption(memOption(), true);
+  }
+  render();
+  var media = window.matchMedia('(prefers-color-scheme: dark)');
+  if (media.addEventListener) { media.addEventListener('change', render); }
+  else if (media.addListener) { media.addListener(render); }
   window.addEventListener('resize', function () { cpuChart.resize(); memChart.resize(); });
 })();
 </script>

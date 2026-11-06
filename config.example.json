@@ -1,7 +1,10 @@
 {
+  "appearance": "system",
   "monitoring": {
     "mode": "tree",
-    "processes": ["your-app.exe"],
+    "processes": [
+      "your-app.exe"
+    ],
     "apps": [],
     "exe_paths": [],
     "pids": [],

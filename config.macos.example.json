@@ -1,9 +1,14 @@
 {
+  "appearance": "system",
   "monitoring": {
     "mode": "tree",
-    "processes": ["YourProcess"],
+    "processes": [
+      "YourProcess"
+    ],
     "apps": [],
-    "exe_paths": ["/Applications/YourApp.app"],
+    "exe_paths": [
+      "/Applications/YourApp.app"
+    ],
     "pids": [],
     "include_children": true,
     "interval_sec": 1.0,
