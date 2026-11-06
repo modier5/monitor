@@ -178,8 +178,14 @@ def describe_target(kind: str, value: str, platform_name: str | None = None) -> 
     return title, f"程序 · {value}"
 
 
-def choose_macos_target() -> str:
-    """Open the native macOS picker, which can select ``.app`` bundles."""
+def choose_macos_target() -> tuple[bool, str]:
+    """Open the native macOS picker, which can select ``.app`` bundles.
+
+    Returns ``(handled, path)``. ``handled`` is ``False`` when the native
+    picker could not run at all, so the caller may fall back to a Tk dialog.
+    A user cancellation returns ``(True, "")`` and must not open a second
+    dialog on top of the cancelled one.
+    """
     script = (
         'set picked to choose file with prompt "选择要监控的 .app 应用或可执行文件" '
         'default location (path to applications folder) '
@@ -194,10 +200,13 @@ def choose_macos_target() -> str:
             timeout=300,
         )
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return False, ""
     if result.returncode != 0:
-        return ""
-    return result.stdout.strip()
+        message = f"{result.stderr or ''}{result.stdout or ''}"
+        if "User canceled" in message or "(-128)" in message:
+            return True, ""
+        return False, ""
+    return True, result.stdout.strip()
 
 
 def _truncate(text: str, limit: int = 68) -> str:
@@ -1364,8 +1373,8 @@ class WatchdogGui:
 
     def _browse_target(self) -> None:
         if sys.platform == "darwin":
-            selected = choose_macos_target()
-            if not selected:
+            handled, selected = choose_macos_target()
+            if not handled:
                 selected = filedialog.askopenfilename(
                     title="选择要监控的 macOS 应用程序 (.app)",
                     initialdir="/Applications",
