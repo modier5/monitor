@@ -28,7 +28,7 @@ bash scripts/build_macos.sh
 ```
 
 也可以在 GitHub Actions 手动运行 `Build macOS app`，一次生成 Apple Silicon 和 Intel
-两个构件。当前 GitHub 托管运行器中 `macos-14` 是 arm64，`macos-15-intel` 是
+两个构件。当前 GitHub 托管运行器中 `macos-15` 是 arm64，`macos-15-intel` 是
 x86_64。构建产物已经内置 Python、psutil、Tk/Tcl、matplotlib 和离线 ECharts。
 
 正式对外分发前，在已安装 `Developer ID Application` 证书的 Mac 上执行：
