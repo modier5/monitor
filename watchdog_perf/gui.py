@@ -248,6 +248,136 @@ class _VarEntry(ctk.CTkEntry):
             self.insert(0, value)
 
 
+class _Dropdown(ctk.CTkFrame):
+    """Self-drawn select control.
+
+    Tk's native menu popup paints a system border around the list (a bright
+    white frame in dark mode), so the list is rendered as a small borderless
+    toplevel instead, using the same palette as the rest of the window.
+    """
+
+    def __init__(
+        self,
+        master,
+        variable: tk.StringVar,
+        values,
+        *,
+        font: ctk.CTkFont,
+        chevron: ctk.CTkImage,
+        check: ctk.CTkImage,
+        height: int = 38,
+        width: int | None = None,
+    ) -> None:
+        options = {"fg_color": SURFACE_ALT, "corner_radius": 10, "height": height, "border_width": 0}
+        if width is not None:
+            options["width"] = width
+        super().__init__(master, **options)
+        self.variable = variable
+        self.values = list(values)
+        self._font = font
+        self._check = check
+        self._popup: tk.Toplevel | None = None
+        self._panel: ctk.CTkFrame | None = None
+        self.grid_propagate(False)
+        self.grid_columnconfigure(0, weight=1)
+        self._text = ctk.CTkLabel(self, text=str(variable.get()), text_color=TEXT, font=font, anchor="w")
+        self._text.grid(row=0, column=0, sticky="ew", padx=(12, 4))
+        self._arrow = ctk.CTkLabel(self, text="", image=chevron, width=16)
+        self._arrow.grid(row=0, column=1, padx=(0, 10))
+        for widget in (self, self._text, self._arrow):
+            widget.configure(cursor="hand2")
+            widget.bind("<Button-1>", self._toggle)
+        variable.trace_add("write", self._sync_text)
+
+    def _sync_text(self, *_args) -> None:
+        try:
+            if self.winfo_exists():
+                self._text.configure(text=str(self.variable.get()))
+        except tk.TclError:
+            pass
+
+    def _toggle(self, _event=None) -> None:
+        if self._popup is not None:
+            self._close()
+        else:
+            self._open_menu()
+
+    def _open_menu(self) -> None:
+        top = tk.Toplevel(self)
+        top.overrideredirect(True)
+        top.configure(bg=self._apply_appearance_mode(BG))
+        try:
+            top.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        panel = ctk.CTkFrame(top, fg_color=SURFACE, border_width=1, border_color=BORDER, corner_radius=11)
+        panel.pack(fill="both", expand=True)
+        panel.grid_columnconfigure(0, weight=1)
+
+        current = str(self.variable.get())
+        row_height = 34
+        for index, value in enumerate(self.values):
+            selected = value == current
+            ctk.CTkButton(
+                panel,
+                text=value,
+                height=row_height - 4,
+                corner_radius=8,
+                anchor="w",
+                fg_color=SURFACE,
+                hover_color=SURFACE_HOVER,
+                text_color=ACCENT_INK if selected else TEXT,
+                font=self._font,
+                image=self._check if selected else None,
+                compound="left",
+                command=lambda picked=value: self._choose(picked),
+            ).grid(row=index, column=0, sticky="ew", padx=5, pady=2)
+
+        width = max(150, min(self.winfo_width(), 320))
+        height = row_height * len(self.values) + 8
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height() + 4
+        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        x = max(8, min(x, screen_w - width - 8))
+        if y + height > screen_h - 8:
+            y = self.winfo_rooty() - height - 4
+        top.geometry(f"{width}x{height}+{x}+{y}")
+        top.update_idletasks()
+        top.bind("<Escape>", lambda _event: self._close())
+        top.bind("<Button-1>", self._close_if_background)
+        try:
+            top.grab_set()
+        except tk.TclError:
+            pass
+        try:
+            top.focus_force()
+        except tk.TclError:
+            pass
+        self._popup, self._panel = top, panel
+
+    def _close_if_background(self, event) -> None:
+        if event.widget is self._popup:
+            self._close()
+
+    def _choose(self, value: str) -> None:
+        self.variable.set(value)
+        self._close()
+
+    def _close(self) -> None:
+        popup, self._popup = self._popup, None
+        self._panel = None
+        if popup is None:
+            return
+        try:
+            popup.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            popup.destroy()
+        except tk.TclError:
+            pass
+
+
 class WatchdogGui:
     def __init__(
         self,
@@ -602,25 +732,17 @@ class WatchdogGui:
             font=self._font(12),
         )
 
-    def _option(self, parent, variable, values: list[str], *, width: int | None = None, height: int = 38) -> ctk.CTkOptionMenu:
-        options = dict(
-            variable=variable,
-            values=values,
-            height=height,
-            corner_radius=10,
-            fg_color=SURFACE_ALT,
-            button_color=SURFACE_ALT,
-            button_hover_color=SURFACE_HOVER,
-            text_color=TEXT,
+    def _option(self, parent, variable, values: list[str], *, width: int | None = None, height: int = 38) -> _Dropdown:
+        return _Dropdown(
+            parent,
+            variable,
+            values,
             font=self._font(12),
-            dropdown_fg_color=SURFACE,
-            dropdown_hover_color=SURFACE_ALT,
-            dropdown_text_color=TEXT,
-            dropdown_font=self._font(12),
+            chevron=self._icon("chevron", TEXT_SECONDARY, 14),
+            check=self._icon("check", ACCENT_INK, 14),
+            height=height,
+            width=width,
         )
-        if width is not None:
-            options["width"] = width
-        return ctk.CTkOptionMenu(parent, **options)
 
     # ------------------------------------------------------------------- shell
     def _build_ui(self) -> None:
@@ -1329,12 +1451,12 @@ class WatchdogGui:
             "notifications": ("通知设置", "配置钉钉机器人通知。"),
         }
         self._active_page = key
+        # Keep every page mapped and raise the requested one. Removing pages
+        # from the grid made the area repaint for a frame, which showed up as a
+        # black flash when switching sections.
         for page_key, frame in self._pages.items():
             if page_key == key:
-                frame.grid()
                 frame.tkraise()
-            else:
-                frame.grid_remove()
         for page_key, item in self._nav_items.items():
             active = page_key == key
             item["frame"].configure(fg_color=NAV_ACTIVE_BG if active else SIDEBAR_BG)

@@ -135,6 +135,8 @@ def _paint(name: str, pen: _Pen) -> None:
         pen.loop([(13.6, 3.4), (13.6, 8.0), (18.2, 8.0)])
         pen.line([(9.2, 12.8), (15.2, 12.8)])
         pen.line([(9.2, 16.4), (15.2, 16.4)])
+    elif name == "chevron":
+        pen.line([(6.6, 9.6), (12.0, 15.0), (17.4, 9.6)])
     elif name == "check":
         pen.line([(5.4, 12.4), (10.0, 17.0), (18.6, 7.2)])
     elif name == "dot":
