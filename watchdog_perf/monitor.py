@@ -43,6 +43,11 @@ def _matches_exe_path(actual_path: str, configured_paths: tuple[str, ...]) -> bo
         return False
     for configured in configured_paths:
         try:
+            if os.path.samefile(actual_path, configured):
+                return True
+        except (OSError, ValueError):
+            pass
+        try:
             expected = _normalize_exe_path(os.path.realpath(configured))
         except OSError:
             expected = _normalize_exe_path(configured)
@@ -174,8 +179,11 @@ class PerfMonitor:
     def _scan_exe_pids(self) -> set[int]:
         matched: set[int] = set()
         try:
-            for proc in psutil.process_iter():
+            # A fresh PID snapshot avoids process_iter()'s cached Process
+            # instances, which can lag newly launched processes on macOS.
+            for pid in psutil.pids():
                 try:
+                    proc = psutil.Process(pid)
                     exe_path = proc.exe()
                 except (
                     psutil.NoSuchProcess,
@@ -184,7 +192,7 @@ class PerfMonitor:
                 ):
                     continue
                 if exe_path and _matches_exe_path(exe_path, self.config.exe_paths):
-                    matched.add(proc.pid)
+                    matched.add(pid)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
         self._cached_exe_pids = matched

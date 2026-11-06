@@ -50,7 +50,16 @@ class ExePathMatchingTests(unittest.TestCase):
                 store=None,
             )
             monitor._scan_exe_pids()
-            self.assertIn(helper.pid, monitor._cached_exe_pids)
+            fresh_exe = psutil.Process(helper.pid).exe()
+            self.assertIn(
+                helper.pid,
+                monitor._cached_exe_pids,
+                msg=(
+                    f"sys.executable={sys.executable!r}; "
+                    f"configured={helper_exe!r}; fresh={fresh_exe!r}; "
+                    f"direct_match={_matches_exe_path(fresh_exe, (helper_exe,))}"
+                ),
+            )
         finally:
             helper.kill()
             helper.wait(timeout=3)
