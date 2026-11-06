@@ -1,0 +1,39 @@
+name: Build Windows app
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Build application
+        run: python -m PyInstaller --noconfirm --clean WatchdogPerf-Windows.spec
+      - name: Verify bundled application
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/WatchdogPerf/WatchdogPerf.exe")) { throw "WatchdogPerf.exe is missing" }
+          if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*python*.dll")) { throw "Python runtime is missing" }
+          if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*_tkinter*")) { throw "Tkinter is missing" }
+          if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*psutil*")) { throw "psutil is missing" }
+          if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "echarts.min.js")) { throw "ECharts is missing" }
+      - name: Package application
+        shell: pwsh
+        run: Compress-Archive -Path "dist/WatchdogPerf" -DestinationPath "dist/WatchdogPerf-Windows-x64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WatchdogPerf-Windows-x64
+          path: dist/WatchdogPerf-Windows-x64.zip
+          if-no-files-found: error

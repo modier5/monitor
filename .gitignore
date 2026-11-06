@@ -7,11 +7,14 @@ logs/
 test_run/
 smoke_*/
 *.png
+!assets/watchdogperf-icon.png
+!watchdog_perf/assets/app_icon.png
 *.svg
 *.log
 build/
 dist/
 *.spec
 !WatchdogPerf-macOS.spec
+!WatchdogPerf-Windows.spec
 9.9挂机结果/
 另一台电脑挂机数据/

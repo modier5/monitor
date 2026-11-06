@@ -39,6 +39,17 @@ class PlatformPathTests(unittest.TestCase):
                 ["gui", "--config", str(expected)],
             )
 
+    def test_windows_bundle_launch_uses_local_user_config(self) -> None:
+        expected = Path("C:/Users/demo/AppData/Local/WatchdogPerf/config.json")
+        with mock.patch("watchdog_perf.platform_paths.sys.platform", "win32"), mock.patch(
+            "watchdog_perf.platform_paths.ensure_desktop_config",
+            return_value=expected,
+        ):
+            self.assertEqual(
+                desktop_argv([], frozen=True),
+                ["gui", "--config", str(expected)],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

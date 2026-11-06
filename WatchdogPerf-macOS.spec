@@ -17,9 +17,12 @@ a = Analysis(
         "matplotlib.backends.backend_svg",
     ],
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={"matplotlib": {"backends": ["Agg"]}},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        "pandas", "scipy", "pytest", "IPython", "dask", "astroid",
+        "plotly", "pyarrow", "PyQt5", "PyQt6", "PySide2", "PySide6",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -54,11 +57,12 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="WatchdogPerf.app",
+    icon="assets/watchdogperf.icns",
     bundle_identifier="com.watchdogperf.monitor",
     info_plist={
         "CFBundleDisplayName": "WatchdogPerf",
         "CFBundleName": "WatchdogPerf",
-        "CFBundleShortVersionString": "0.2.6",
+        "CFBundleShortVersionString": "0.3.0",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
     },

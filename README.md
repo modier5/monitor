@@ -12,8 +12,10 @@ Windows / macOS 长时进程性能监控与回溯工具。持续采集指定进�
 - 第一次启动自动创建 `~/Library/Application Support/WatchdogPerf/config.json`
 - CSV、日志、备份与报告默认写到
   `~/Library/Application Support/WatchdogPerf/data/`
-- GUI 中可填进程名、`PID:1234`、完整可执行文件路径，或直接填
-  `PATH:/Applications/YourApp.app`；应用稍后启动或重启也能重新发现
+- GUI 可通过“应用/可执行文件、PID、进程名”三种方式添加监控目标，macOS
+  可浏览选择 `.app`，Windows 可浏览选择 `.exe`
+- 采样、CSV 目录、备份、结束条件与钉钉通知均可在 GUI 中修改并保存回
+  `config.json`；应用稍后启动或重启也能重新发现
 
 未使用 Apple Developer ID 公证的内部测试包，首次需在 Finder 中按住 Control 点按应用，
 选择“打开”。面向普通用户分发时应使用下文的签名/公证步骤，公证后的包可以正常双击打开。
@@ -160,7 +162,8 @@ python -m watchdog_perf monitor --process app.exe --process worker*.exe --pid 12
 `root_pid`/`root_name`/`depth` 独立记录，通知汇总里逐进程列出 CPU 均值和内存峰值。
 同名的不同 exe 路径会按 `exe_path` 区分；旧版 CSV 未记录路径时，绘图退化为按进程名合并。
 
-打开 GUI（监控、停止、加载历史 CSV 生成 HTML、导出 PNG/SVG 均可在同一窗口完成）：
+打开 GUI（添加应用/可执行文件、PID 或进程名，编辑全部配置，选择 CSV 保存目录，
+监控、停止、加载历史 CSV 和导出报告均可在同一窗口完成）：
 
 ```powershell
 python -m watchdog_perf monitor
@@ -329,8 +332,19 @@ watchdog_perf/
 tests/         核心存储与绘图回归测试
 ```
 
-若需要 Windows 单文件 EXE，可在安装 `pyinstaller` 后执行：
+## 桌面应用打包
+
+Windows 目录版（包含 Python 与全部依赖，无需用户安装运行环境）：
 
 ```powershell
-pyinstaller --onefile --name WatchdogPerf --collect-data matplotlib watchdog_perf_app.py
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --noconfirm --clean WatchdogPerf-Windows.spec
 ```
+
+生成目录为 `dist/WatchdogPerf/`。必须完整分发该目录，入口为
+`dist/WatchdogPerf/WatchdogPerf.exe`。Windows 和 macOS 的应用图标分别来自
+`assets/watchdogperf.ico` 与 `assets/watchdogperf.icns`。
+
+推送 `v*` 标签后，GitHub Actions 会自动运行 `Build Windows app` 和
+`Build macOS app`：生成 Windows x64、macOS Apple Silicon 和 macOS Intel 三种
+无需 Python 的压缩包，可在对应 Actions 运行页底部的 Artifacts 下载。

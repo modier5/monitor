@@ -344,3 +344,77 @@ def write_default_config(path: str | Path, data: dict[str, Any] | None = None) -
         encoding="utf-8",
     )
     return out
+
+
+def settings_to_dict(settings: AppSettings) -> dict[str, Any]:
+    """Return the complete, JSON-serializable representation of *settings*.
+
+    Keeping this conversion in the configuration layer lets both the desktop
+    UI and future frontends update config.json without duplicating its schema.
+    """
+    return {
+        "monitoring": {
+            "mode": settings.mode,
+            "processes": list(settings.processes),
+            "apps": [
+                {
+                    "name": app.name,
+                    "roots": list(app.roots),
+                    "enabled": app.enabled,
+                }
+                for app in settings.apps
+            ],
+            "exe_paths": list(settings.exe_paths),
+            "pids": list(settings.pids),
+            "include_children": settings.include_children,
+            "interval_sec": settings.interval_sec,
+            "data_dir": str(settings.data_dir),
+            "disk_limit_mb": settings.disk_limit_mb,
+            "fsync_every_rows": settings.fsync_every_rows,
+            "backup_every_rows": settings.backup_every_rows,
+            "backup_keep": settings.backup_keep,
+            "self_status_interval_sec": settings.self_status_interval_sec,
+        },
+        "end_condition": {
+            "enabled": settings.end_condition.enabled,
+            "combine": settings.end_condition.combine,
+            "sustained_sec": settings.end_condition.sustained_sec,
+            "cooldown_sec": settings.end_condition.cooldown_sec,
+            "action": settings.end_condition.action,
+            "targets_gone": {
+                "enabled": settings.end_condition.targets_gone_enabled,
+                "grace_sec": settings.end_condition.targets_gone_grace_sec,
+            },
+            "rules": [
+                {
+                    "metric": rule.metric,
+                    "operator": rule.operator,
+                    "value": rule.value,
+                    "enabled": rule.enabled,
+                }
+                for rule in settings.end_condition.rules
+            ],
+        },
+        "notify": {
+            "dingtalk": {
+                "enabled": settings.dingtalk.enabled,
+                "webhook": settings.dingtalk.webhook,
+                "secret": settings.dingtalk.secret,
+                "timeout_sec": settings.dingtalk.timeout_sec,
+            }
+        },
+    }
+
+
+def save_settings(settings: AppSettings, path: str | Path | None = None) -> Path:
+    """Persist settings as UTF-8 JSON and remember the selected config path."""
+    target = Path(path) if path is not None else settings.config_path
+    if target is None:
+        target = Path("config.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(settings_to_dict(settings), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    settings.config_path = target
+    return target

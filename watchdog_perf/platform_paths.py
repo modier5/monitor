@@ -49,6 +49,6 @@ def desktop_argv(arguments: list[str], *, frozen: bool | None = None) -> list[st
     if filtered:
         return filtered
     frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
-    if sys.platform == "darwin" and frozen:
+    if sys.platform in {"darwin", "win32"} and frozen:
         return ["gui", "--config", str(ensure_desktop_config())]
     return ["gui"]
