@@ -32,6 +32,37 @@ class ExePathMatchingTests(unittest.TestCase):
                 )
             )
 
+    def test_macos_inner_executable_can_be_configured_directly(self) -> None:
+        """Users who open the bundle and pick Contents/MacOS/... keep working."""
+        inner = "/Applications/Demo.app/Contents/MacOS/Demo"
+        with mock.patch("watchdog_perf.monitor.sys.platform", "darwin"):
+            self.assertTrue(_matches_exe_path(inner, (inner,)))
+            # Trailing slash from the macOS picker must not break the match.
+            self.assertTrue(_matches_exe_path(inner, (inner + "/",)))
+            # Sibling helpers and a different bundle must not match.
+            self.assertFalse(
+                _matches_exe_path("/Applications/Demo.app/Contents/MacOS/Helper", (inner,))
+            )
+            self.assertFalse(
+                _matches_exe_path("/Applications/Other.app/Contents/MacOS/Other", (inner,))
+            )
+
+    def test_macos_bundle_target_does_not_match_unrelated_bundle(self) -> None:
+        with mock.patch("watchdog_perf.monitor.sys.platform", "darwin"):
+            self.assertFalse(
+                _matches_exe_path(
+                    "/Applications/Other.app/Contents/MacOS/Other",
+                    ("/Applications/Demo.app",),
+                )
+            )
+            # A plain prefix must not be treated as an app-bundle match.
+            self.assertFalse(
+                _matches_exe_path(
+                    "/Applications/Demo.app-extra/Contents/MacOS/X",
+                    ("/Applications/Demo.app",),
+                )
+            )
+
     def test_exe_paths_count_as_process_targets(self) -> None:
         config = MonitorConfig(exe_paths=(sys.executable,))
         self.assertTrue(config.has_process_targets)
