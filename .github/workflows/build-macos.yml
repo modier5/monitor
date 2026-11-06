@@ -29,7 +29,22 @@ jobs:
         run: |
           python -c "import matplotlib, psutil, tkinter; print('matplotlib', matplotlib.__version__); print('psutil', psutil.__version__); print('tk', tkinter.TkVersion)"
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        run: |
+          set +e
+          python -m unittest discover -s tests -v 2>&1 | tee test-output.txt
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            {
+              echo "### macOS test failure"
+              echo '```text'
+              tail -n 120 test-output.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            while IFS= read -r line; do
+              echo "::error title=macOS test failure::$line"
+            done < <(tail -n 80 test-output.txt)
+            exit "$status"
+          fi
       - name: Build application bundle
         run: python -m PyInstaller --noconfirm --clean WatchdogPerf-macOS.spec
       - name: Verify architecture and CLI startup

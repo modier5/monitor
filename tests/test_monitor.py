@@ -6,6 +6,8 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
+import psutil
+
 from watchdog_perf.monitor import (
     MonitorConfig,
     PerfMonitor,
@@ -39,8 +41,12 @@ class ExePathMatchingTests(unittest.TestCase):
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         try:
+            # macOS Framework Python may launch the child from a different
+            # real executable path than sys.executable.  Ask the OS for the
+            # child's actual path so this remains an exact-path discovery test.
+            helper_exe = psutil.Process(helper.pid).exe()
             monitor = PerfMonitor(
-                MonitorConfig(exe_paths=(sys.executable,), interval_sec=0.2),
+                MonitorConfig(exe_paths=(helper_exe,), interval_sec=0.2),
                 store=None,
             )
             monitor._scan_exe_pids()
