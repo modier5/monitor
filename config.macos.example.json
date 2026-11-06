@@ -1,0 +1,37 @@
+{
+  "monitoring": {
+    "mode": "tree",
+    "processes": ["YourProcess"],
+    "apps": [],
+    "exe_paths": ["/Applications/YourApp.app"],
+    "pids": [],
+    "include_children": true,
+    "interval_sec": 1.0,
+    "data_dir": "data",
+    "disk_limit_mb": 100,
+    "fsync_every_rows": 1,
+    "backup_every_rows": 10000,
+    "backup_keep": 3,
+    "self_status_interval_sec": 300.0
+  },
+  "end_condition": {
+    "enabled": false,
+    "combine": "all",
+    "sustained_sec": 300.0,
+    "cooldown_sec": 3600.0,
+    "action": "notify_and_stop",
+    "targets_gone": {
+      "enabled": true,
+      "grace_sec": 30.0
+    },
+    "rules": []
+  },
+  "notify": {
+    "dingtalk": {
+      "enabled": false,
+      "webhook": "",
+      "secret": "",
+      "timeout_sec": 10
+    }
+  }
+}

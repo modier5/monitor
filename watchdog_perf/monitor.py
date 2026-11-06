@@ -8,6 +8,7 @@ import io
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -29,7 +30,7 @@ log = logging.getLogger("watchdog_perf.monitor")
 
 
 def _normalize_exe_path(path: str) -> str:
-    """Normalize a Windows path for case-insensitive exact comparison."""
+    """Normalize an executable path using the host filesystem's semantics."""
     return os.path.normcase(os.path.normpath(str(path).strip().strip('"')))
 
 
@@ -47,6 +48,19 @@ def _matches_exe_path(actual_path: str, configured_paths: tuple[str, ...]) -> bo
             expected = _normalize_exe_path(configured)
         if actual == expected:
             return True
+        # On macOS users naturally select/type an application bundle.  The
+        # running executable lives below Foo.app/Contents/MacOS, so treat the
+        # bundle itself as an exact application target (not a general prefix).
+        if sys.platform == "darwin" and expected.lower().endswith(".app"):
+            # Slash normalization also keeps this branch straightforward to
+            # unit-test from a non-macOS development machine.
+            actual_compare = actual.replace("\\", "/")
+            expected_compare = expected.replace("\\", "/").rstrip("/")
+            remainder = actual_compare[len(expected_compare) :]
+            if actual_compare.startswith(expected_compare) and remainder.lower().startswith(
+                "/contents/macos/"
+            ):
+                return True
     return False
 
 

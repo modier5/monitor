@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+.venv-build-macos/
 .pytest_cache/
 data/
 logs/
@@ -11,5 +12,6 @@ smoke_*/
 build/
 dist/
 *.spec
+!WatchdogPerf-macOS.spec
 9.9挂机结果/
 另一台电脑挂机数据/

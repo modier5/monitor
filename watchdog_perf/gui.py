@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import queue
 import re
+import sys
 import threading
 import webbrowser
 from datetime import date, datetime
@@ -102,11 +103,16 @@ class WatchdogGui:
         self.interval_spin.grid(row=0, column=3, padx=(4, 2))
         ttk.Label(top, text="秒").grid(row=0, column=4, sticky="w")
 
+        path_example = (
+            "PATH:/Applications/YourApp.app"
+            if sys.platform == "darwin"
+            else "EXE:C:\\path\\app.exe"
+        )
         ttk.Label(
             top,
             text=(
                 "留空仅监控系统全局；非空时同时记录进程与整机占用；支持 * 通配符、"
-                "PID:1234、EXE:C:\\path\\app.exe"
+                f"PID:1234、{path_example}"
             ),
             foreground="#666666",
         ).grid(row=0, column=5, columnspan=4, sticky="e", padx=(14, 0))
@@ -192,8 +198,13 @@ class WatchdogGui:
                 except ValueError:
                     messagebox.showerror("参数错误", f"无效 PID: {raw}")
                     return
-            elif lowered.startswith("exe:") or lowered.startswith("path="):
-                path = raw.split(":", 1)[-1].strip().strip('"')
+            elif (
+                lowered.startswith("exe:")
+                or lowered.startswith("path:")
+                or lowered.startswith("path=")
+            ):
+                separator = ":" if ":" in raw else "="
+                path = raw.split(separator, 1)[-1].strip().strip('"')
                 if not path:
                     messagebox.showerror("参数错误", f"无效 EXE 路径: {raw}")
                     return

@@ -1,12 +1,55 @@
 # Watchdog-Perf
 
-Windows 长时进程性能监控与回溯工具。持续采集指定进程（或系统全局）的 CPU 与内存数据，并采用**逐行追加 + 立即 flush** 的方式写入按监控会话滚动的 CSV，尽量降低蓝屏或强制杀进程时的数据丢失；之后可离线加载历史文件生成可缩放、可平移的交互 HTML 图表。
+Windows / macOS 长时进程性能监控与回溯工具。持续采集指定进程（或系统全局）的 CPU 与内存数据，并采用**逐行追加 + 立即 flush** 的方式写入按监控会话滚动的 CSV，尽量降低死机或强制结束进程时的数据丢失；之后可离线加载历史文件生成可缩放、可平移的交互 HTML 图表。
+
+## macOS 开箱即用版
+
+普通使用者不需要安装 Python 或依赖：下载与 Mac 处理器匹配的压缩包，解压后把
+`WatchdogPerf.app` 拖入“应用程序”，双击即可使用。
+
+- Apple Silicon（M1/M2/M3/M4 等）：`WatchdogPerf-macOS-arm64.zip`
+- Intel Mac：`WatchdogPerf-macOS-x86_64.zip`
+- 第一次启动自动创建 `~/Library/Application Support/WatchdogPerf/config.json`
+- CSV、日志、备份与报告默认写到
+  `~/Library/Application Support/WatchdogPerf/data/`
+- GUI 中可填进程名、`PID:1234`、完整可执行文件路径，或直接填
+  `PATH:/Applications/YourApp.app`；应用稍后启动或重启也能重新发现
+
+未使用 Apple Developer ID 公证的内部测试包，首次需在 Finder 中按住 Control 点按应用，
+选择“打开”。面向普通用户分发时应使用下文的签名/公证步骤，公证后的包可以正常双击打开。
+
+### 在 macOS 上构建 `.app`
+
+PyInstaller 不能从 Windows 交叉编译 macOS 应用。项目提供了两种构建方式：
+
+```bash
+# 任意 Mac 本机一键构建、测试并打包当前 CPU 架构
+bash scripts/build_macos.sh
+```
+
+也可以在 GitHub Actions 手动运行 `Build macOS app`，一次生成 Apple Silicon 和 Intel
+两个构件。当前 GitHub 托管运行器中 `macos-14` 是 arm64，`macos-15-intel` 是
+x86_64。构建产物已经内置 Python、psutil、Tk/Tcl、matplotlib 和离线 ECharts。
+
+正式对外分发前，在已安装 `Developer ID Application` 证书的 Mac 上执行：
+
+```bash
+export CODESIGN_IDENTITY='Developer ID Application: Your Name (TEAMID)'
+export APPLE_ID='you@example.com'
+export APPLE_TEAM_ID='TEAMID'
+export APPLE_APP_PASSWORD='xxxx-xxxx-xxxx-xxxx'
+bash scripts/notarize_macos.sh dist/WatchdogPerf.app
+```
+
+这会启用 Hardened Runtime、提交 Apple 公证、装订公证票据并输出最终 zip。应用不启用
+App Sandbox，因为它需要读取当前用户启动的其他进程；通常不需要管理员权限，但 macOS
+可能拒绝读取其他用户或受系统保护进程的详细路径，此时这些进程会被跳过，整机监控不受影响。
 
 ## 快速开始
 
 依赖为 `psutil` 和 `matplotlib`；HTML 报告使用浏览器端的 ECharts，库已内嵌，离线也可打开：
 
-```powershell
+```shell
 pip install -r requirements.txt
 ```
 
@@ -28,10 +71,17 @@ python -m watchdog_perf monitor --process "python*" --process chrome.exe --headl
 python -m watchdog_perf monitor --pid 12345 --headless
 ```
 
-按 exe 完整路径采集（进程之后才启动也会被自动发现；可多次指定）：
+按可执行文件完整路径采集（进程之后才启动也会被自动发现；可多次指定）：
 
 ```powershell
 python -m watchdog_perf monitor --exe "D:\Apps\FanxiangCloud\ai-manager.exe" --headless
+```
+
+macOS 示例（`.app` 配置会自动匹配包内 `Contents/MacOS/` 下的实际可执行文件）：
+
+```bash
+python -m watchdog_perf monitor --process "Google Chrome" --headless
+python -m watchdog_perf monitor --exe "/Applications/Google Chrome.app" --headless
 ```
 
 不指定任何进程时默认监控系统全局 CPU 与已用内存。
@@ -279,7 +329,7 @@ watchdog_perf/
 tests/         核心存储与绘图回归测试
 ```
 
-若需要单文件 EXE，可在安装 `pyinstaller` 后执行：
+若需要 Windows 单文件 EXE，可在安装 `pyinstaller` 后执行：
 
 ```powershell
 pyinstaller --onefile --name WatchdogPerf --collect-data matplotlib watchdog_perf_app.py

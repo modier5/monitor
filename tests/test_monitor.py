@@ -4,6 +4,7 @@ import subprocess
 import sys
 import unittest
 from datetime import datetime
+from unittest import mock
 
 from watchdog_perf.monitor import (
     MonitorConfig,
@@ -14,9 +15,19 @@ from watchdog_perf.monitor import (
 
 
 class ExePathMatchingTests(unittest.TestCase):
-    def test_exact_exe_path_matching_is_case_insensitive(self) -> None:
+    def test_exact_exe_path_matching_uses_platform_case_rules(self) -> None:
         self.assertTrue(_matches_exe_path(sys.executable, (sys.executable,)))
-        self.assertTrue(_matches_exe_path(sys.executable.upper(), (sys.executable,)))
+        if sys.platform == "win32":
+            self.assertTrue(_matches_exe_path(sys.executable.upper(), (sys.executable,)))
+
+    def test_macos_app_bundle_matches_its_inner_executable(self) -> None:
+        with mock.patch("watchdog_perf.monitor.sys.platform", "darwin"):
+            self.assertTrue(
+                _matches_exe_path(
+                    "/Applications/Demo.app/Contents/MacOS/Demo",
+                    ("/Applications/Demo.app",),
+                )
+            )
 
     def test_exe_paths_count_as_process_targets(self) -> None:
         config = MonitorConfig(exe_paths=(sys.executable,))
