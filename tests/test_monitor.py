@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 import unittest
 from datetime import datetime
 from unittest import mock
@@ -42,8 +43,10 @@ class ExePathMatchingTests(unittest.TestCase):
         )
         try:
             # macOS Framework Python may launch the child from a different
-            # real executable path than sys.executable.  Ask the OS for the
-            # child's actual path so this remains an exact-path discovery test.
+            # real executable path than sys.executable after a short handoff
+            # to Python.app.  Wait for that handoff, then ask the OS for the
+            # stable path so this remains an exact-path discovery test.
+            time.sleep(0.5)
             helper_exe = psutil.Process(helper.pid).exe()
             monitor = PerfMonitor(
                 MonitorConfig(exe_paths=(helper_exe,), interval_sec=0.2),
