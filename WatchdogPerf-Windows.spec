@@ -3,7 +3,11 @@
 from PyInstaller.utils.hooks import collect_data_files
 
 
-datas = collect_data_files("matplotlib") + collect_data_files("watchdog_perf")
+datas = (
+    collect_data_files("matplotlib")
+    + collect_data_files("customtkinter")
+    + collect_data_files("watchdog_perf")
+)
 
 a = Analysis(
     ["watchdog_perf_app.py"],

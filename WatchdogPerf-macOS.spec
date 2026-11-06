@@ -3,7 +3,11 @@
 from PyInstaller.utils.hooks import collect_data_files
 
 
-datas = collect_data_files("matplotlib") + collect_data_files("watchdog_perf")
+datas = (
+    collect_data_files("matplotlib")
+    + collect_data_files("customtkinter")
+    + collect_data_files("watchdog_perf")
+)
 
 a = Analysis(
     ["watchdog_perf_app.py"],
@@ -62,7 +66,7 @@ app = BUNDLE(
     info_plist={
         "CFBundleDisplayName": "WatchdogPerf",
         "CFBundleName": "WatchdogPerf",
-        "CFBundleShortVersionString": "0.3.0",
+        "CFBundleShortVersionString": "0.4.0",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
     },

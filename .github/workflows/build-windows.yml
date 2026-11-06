@@ -28,6 +28,7 @@ jobs:
           if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*python*.dll")) { throw "Python runtime is missing" }
           if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*_tkinter*")) { throw "Tkinter is missing" }
           if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*psutil*")) { throw "psutil is missing" }
+          if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "*customtkinter*")) { throw "CustomTkinter is missing" }
           if (-not (Get-ChildItem "dist/WatchdogPerf" -Recurse -Filter "echarts.min.js")) { throw "ECharts is missing" }
       - name: Package application
         shell: pwsh

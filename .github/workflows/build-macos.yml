@@ -27,7 +27,7 @@ jobs:
         run: python -m pip install -r requirements-build.txt
       - name: Verify bundled-library inputs
         run: |
-          python -c "import matplotlib, psutil, tkinter; print('matplotlib', matplotlib.__version__); print('psutil', psutil.__version__); print('tk', tkinter.TkVersion)"
+          python -c "import customtkinter, matplotlib, psutil, tkinter; print('customtkinter', customtkinter.__version__); print('matplotlib', matplotlib.__version__); print('psutil', psutil.__version__); print('tk', tkinter.TkVersion)"
       - name: Run tests
         run: |
           set +e
@@ -55,6 +55,7 @@ jobs:
           find dist/WatchdogPerf.app -name "*_tkinter*" -print -quit | grep .
           find dist/WatchdogPerf.app -iname "*psutil*" -print -quit | grep .
           find dist/WatchdogPerf.app -path "*matplotlib*" -print -quit | grep .
+          find dist/WatchdogPerf.app -path "*customtkinter*" -print -quit | grep .
           find dist/WatchdogPerf.app -name "echarts.min.js" -print -quit | grep .
       - name: Package app bundle
         run: ditto -c -k --sequesterRsrc --keepParent dist/WatchdogPerf.app "dist/WatchdogPerf-macOS-${{ matrix.arch }}.zip"
