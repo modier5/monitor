@@ -2,8 +2,9 @@
 
 Windows / macOS 长时进程性能监控与回溯工具。持续采集指定进程（或系统全局）的 CPU 与内存数据，并采用**逐行追加 + 立即 flush** 的方式写入按监控会话滚动的 CSV，尽量降低死机或强制结束进程时的数据丢失；之后可离线加载历史文件生成可缩放、可平移的交互 HTML 图表。
 
-桌面端采用现代圆角界面，提供侧栏导航、运行概览、图形化目标管理、完整配置编辑和
-系统明暗主题适配。界面使用 CustomTkinter，打包产物已内置该依赖。
+桌面端采用深色导航栏 + 浅色（或深色）内容区的现代界面：圆角面板、翡翠绿强调色、
+平台原生字体（Windows 用微软雅黑 UI，macOS 用苹方 PingFang SC），并适配系统明暗主题。
+界面使用 CustomTkinter，打包产物已内置该依赖。
 
 ## macOS 开箱即用版
 
@@ -15,8 +16,10 @@ Windows / macOS 长时进程性能监控与回溯工具。持续采集指定进�
 - 第一次启动自动创建 `~/Library/Application Support/WatchdogPerf/config.json`
 - CSV、日志、备份与报告默认写到
   `~/Library/Application Support/WatchdogPerf/data/`
-- GUI 在 macOS 显示“macOS 应用 (.app)”，直接选择 Finder 中的应用；在 Windows
-  显示“Windows 程序 (.exe)”，直接选择可执行文件；两端都支持进程名和 PID
+- GUI 在 macOS 显示“macOS 应用 (.app)”，点“浏览”会打开系统选择器，可直接选中
+  `应用程序` 里的 `.app` 应用包，不需要右键“显示包内容”；也支持粘贴包内
+  `Contents/MacOS/` 可执行文件的完整路径。Windows 显示“Windows 程序 (.exe)”，
+  直接选择可执行文件；两端都支持进程名和 PID
 - 采样、CSV 目录、备份、结束条件与钉钉通知均可在 GUI 中修改并保存回
   `config.json`；应用稍后启动或重启也能重新发现
 
@@ -52,12 +55,13 @@ App Sandbox，因为它需要读取当前用户启动的其他进程；通常不
 
 ## 图形界面使用
 
-桌面端采用现代圆角界面，左侧提供五个页面：
+桌面端左侧是深色导航栏，右侧内容区随系统切换明暗主题，五个页面分别是：
 
-- **运行概览**：显示本次监控的整机 CPU、目标内存、样本数量和当前输出文件；
-- **监控目标**：添加 Windows 程序、macOS 应用、进程名或 PID；
+- **运行概览**：显示本次监控的整机 CPU、目标内存、样本数量、输出文件，以及打开目录、
+  加载历史 CSV、导出报告的快捷入口；
+- **监控目标**：添加 Windows 程序、macOS 应用、进程名或 PID，列表会显示每个目标的类型和路径；
 - **采集与存储**：设置采样间隔、是否包含子进程、CSV 保存目录、落盘和备份策略；
-- **结束条件**：设置 CPU/内存阈值、持续时间、目标退出条件和触发动作；
+- **结束条件**：设置 CPU/内存阈值、规则组合方式、持续时间、目标退出条件和触发动作；
 - **通知设置**：配置钉钉机器人 Webhook、Secret 和请求超时。
 
 修改后点击“保存配置”会立即写入当前用户的 `config.json`；点击“保存并开始”会先校验并
@@ -75,11 +79,12 @@ macOS 桌面包默认保存到：
 
 ### Windows 和 macOS 应该选择什么目标
 
-| 平台 | GUI 选项 | 应该选择的内容 | 示例 |
+| 平台 | GUI 选项 | 推荐选择 | 示例 |
 |---|---|---|---|
 | Windows | Windows 程序 (.exe) | 程序实际的 `.exe` 文件 | `C:\Program Files\Demo\Demo.exe` |
-| macOS | macOS 应用 (.app) | Finder 里看到的 `.app` 应用包，不需要进入包内部 | `/Applications/Google Chrome.app` |
-| 两个平台 | 进程名 | 任务管理器或活动监视器中显示的进程名 | `ffmpeg.exe` / `Google Chrome` |
+| macOS | macOS 应用 (.app) | Finder 里看到的 `.app` 应用包（推荐） | `/Applications/Google Chrome.app` |
+| macOS | macOS 应用 (.app) | 也支持包内的 Unix 可执行文件 | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
+| 两个平台 | 进程名 | 活动监视器或任务管理器中的进程名 | `Google Chrome` / `ffmpeg.exe` |
 | 两个平台 | PID | 当前正在运行的进程数字 PID | `12345` |
 
 macOS 的 `.app` 在文件系统中是“应用程序包目录”，不是单个 exe。真正运行的主程序通常位于：
@@ -88,10 +93,19 @@ macOS 的 `.app` 在文件系统中是“应用程序包目录”，不是单个
 /Applications/应用名.app/Contents/MacOS/可执行文件
 ```
 
-用户只需在 GUI 中选择外层 `.app`。WatchdogPerf 会自动把 `.app` 路径与包内
-`Contents/MacOS/` 下的实际进程对应起来；启用“包含子进程”后，该应用启动的辅助进程、
-渲染进程和工作进程也会继续被跟踪。因此不需要右键“显示包内容”，也不需要手工寻找
-`Contents/MacOS` 内部文件。
+**推荐做法**：在“监控目标”页点“浏览”，弹出的 macOS 系统选择器可以直接选中 `应用程序`
+文件夹里的 `.app`，不需要右键“显示包内容”。WatchdogPerf 会读取 `Contents/Info.plist`
+中的 `CFBundleExecutable`，把 `.app` 与包内 `Contents/MacOS/` 下的实际进程对应起来；
+启用“包含子进程”后，该应用启动的辅助进程、渲染进程和工作进程也会继续被跟踪。
+
+**另一种同样可行的写法**：如果你已经打开包内容并找到了 `Contents/MacOS/` 下那个没有后缀的
+Unix 可执行文件，也可以把它的完整路径加进目标。两种写法都支持：
+
+- 填 `.app`：按“包内主程序”匹配，应用升级、重启后仍然有效；
+- 填包内可执行文件：按精确路径匹配，同样会在进程重启后自动重新绑定。
+
+只有当某个应用把真正干活的进程交给**不属于它**的独立服务时（不在它的子进程树里），才需要
+额外把那个进程名也加进目标，或使用 `monitoring.apps` 配置。
 
 下列情况更适合选择“进程名”而不是 `.app`：
 
@@ -100,8 +114,11 @@ macOS 的 `.app` 在文件系统中是“应用程序包目录”，不是单个
 - 一个 `.app` 只负责启动另一个完全独立、且不属于其子进程树的服务；
 - 希望使用通配符匹配会反复启动的同类进程。
 
+> 小提示：如果系统选择器里一时找不到目标应用，可以在 Finder 中把 `.app` 直接拖进输入框，
+> 或右键“显示包内容”，把 `Contents/MacOS/` 下的可执行文件路径粘贴进来。
+
 配置文件中的字段仍命名为 `monitoring.exe_paths`，这是为了兼容旧版配置；在 macOS 上该字段
-同样可以保存 `.app` 路径，并不表示用户必须寻找 exe 文件。
+同样可以保存 `.app` 路径或包内可执行文件路径，并不表示用户必须寻找 exe 文件。
 
 ## 快速开始
 
@@ -140,6 +157,8 @@ macOS 示例（`.app` 配置会自动匹配包内 `Contents/MacOS/` 下的实际
 ```bash
 python -m watchdog_perf monitor --process "Google Chrome" --headless
 python -m watchdog_perf monitor --exe "/Applications/Google Chrome.app" --headless
+# 也可以直接指定包内的 Unix 可执行文件
+python -m watchdog_perf monitor --exe "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless
 ```
 
 不指定任何进程时默认监控系统全局 CPU 与已用内存。
@@ -383,7 +402,8 @@ watchdog_perf/
   monitor.py   进程发现/重启跟踪、CPU 内存采样、主循环
   plotting.py  CSV 解析、统计、matplotlib 静态导出
   html_report.py  ECharts 交互 HTML 报告
-  gui.py       Tkinter 界面
+  gui.py       CustomTkinter 界面
+  ui_icons.py  运行时绘制的矢量图标与品牌标记
   cli.py       monitor / gui / plot 命令入口
 tests/         核心存储与绘图回归测试
 ```
