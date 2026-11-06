@@ -58,7 +58,7 @@ app = BUNDLE(
     info_plist={
         "CFBundleDisplayName": "WatchdogPerf",
         "CFBundleName": "WatchdogPerf",
-        "CFBundleShortVersionString": "0.2.2",
+        "CFBundleShortVersionString": "0.2.3",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
     },
