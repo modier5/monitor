@@ -36,16 +36,41 @@ TEAL_SOFT = ("#E5F6F4", "#173338")
 DANGER = "#C94E5A"
 DANGER_HOVER = "#A93A45"
 
-TARGET_LABELS = {
-    "exe": "应用 / 可执行文件",
-    "pid": "PID",
-    "name": "进程名",
-}
 METRIC_LABELS = {
     "cpu_machine_percent": "CPU 占用率 (%)",
     "memory_mb": "内存占用 (MB)",
 }
 METRIC_KEYS = {label: key for key, label in METRIC_LABELS.items()}
+
+
+def target_labels(platform_name: str | None = None) -> dict[str, str]:
+    """Return platform-native labels for the three target selectors."""
+    platform_name = platform_name or sys.platform
+    program_label = (
+        "macOS 应用 (.app)"
+        if platform_name == "darwin"
+        else "Windows 程序 (.exe)"
+        if platform_name == "win32"
+        else "应用 / 可执行文件"
+    )
+    return {"exe": program_label, "pid": "PID", "name": "进程名"}
+
+
+def target_placeholder(kind: str, platform_name: str | None = None) -> str:
+    platform_name = platform_name or sys.platform
+    if kind == "pid":
+        return "输入 PID，例如 1234"
+    if kind == "name":
+        return (
+            "输入进程名，例如 Google Chrome"
+            if platform_name == "darwin"
+            else "输入进程名，例如 ffmpeg.exe 或 chrome.exe"
+        )
+    if platform_name == "darwin":
+        return "选择 /Applications 中的 .app 应用程序"
+    if platform_name == "win32":
+        return "选择 Windows .exe 可执行程序"
+    return "选择应用或可执行文件路径"
 
 
 class WatchdogGui:
@@ -97,6 +122,7 @@ class WatchdogGui:
         self.target_records: list[tuple[str, str]] = []
         self.rule_records: list[ConditionRule] = []
         self._font_name = "SF Pro Display" if sys.platform == "darwin" else "Segoe UI"
+        self.target_labels = target_labels()
 
         self.live_var = tk.StringVar(value="服务就绪")
         self.status_var = tk.StringVar(value=f"数据目录：{self.data_dir}")
@@ -399,7 +425,7 @@ class WatchdogGui:
 
         self.target_kind = ctk.CTkSegmentedButton(
             left,
-            values=list(TARGET_LABELS.values()),
+            values=list(self.target_labels.values()),
             height=38,
             corner_radius=11,
             fg_color=SURFACE_ALT,
@@ -412,7 +438,7 @@ class WatchdogGui:
             command=self._target_kind_changed,
         )
         self.target_kind.grid(row=1, column=0, sticky="ew", padx=22, pady=(18, 12))
-        self.target_kind.set(TARGET_LABELS["exe"])
+        self.target_kind.set(self.target_labels["exe"])
 
         input_row = ctk.CTkFrame(left, fg_color="transparent", corner_radius=0)
         input_row.grid(row=2, column=0, sticky="ew", padx=22)
@@ -425,7 +451,7 @@ class WatchdogGui:
             border_color=BORDER,
             fg_color=("#FFFFFF", "#0B111C"),
             text_color=TEXT,
-            placeholder_text="选择 .exe、.app 或可执行文件路径",
+            placeholder_text=target_placeholder("exe"),
             font=self._font(12),
         )
         self.target_entry.grid(row=0, column=0, sticky="ew")
@@ -712,31 +738,26 @@ class WatchdogGui:
             entry.configure(width=width)
 
     def _target_kind_changed(self, label: str) -> None:
-        kind = next((key for key, text in TARGET_LABELS.items() if text == label), "exe")
-        placeholders = {
-            "exe": "选择 .exe、.app 或可执行文件路径",
-            "pid": "输入 PID，例如 1234",
-            "name": "输入进程名，例如 ffmpeg 或 chrome.exe",
-        }
-        self.target_entry.configure(placeholder_text=placeholders[kind])
+        kind = next((key for key, text in self.target_labels.items() if text == label), "exe")
+        self.target_entry.configure(placeholder_text=target_placeholder(kind))
         self.browse_target_button.configure(state="normal" if kind == "exe" else "disabled")
         self.target_value_var.set("")
         self.target_entry.focus_set()
 
     def _selected_target_kind(self) -> str:
         label = self.target_kind.get()
-        return next((key for key, text in TARGET_LABELS.items() if text == label), "exe")
+        return next((key for key, text in self.target_labels.items() if text == label), "exe")
 
     def _browse_target(self) -> None:
         if sys.platform == "darwin":
             selected = filedialog.askopenfilename(
-                title="选择应用或可执行文件",
+                title="选择要监控的 macOS 应用程序 (.app)",
                 initialdir="/Applications",
-                filetypes=[("macOS 应用", "*.app"), ("所有文件", "*.*")],
+                filetypes=[("macOS 应用程序", "*.app"), ("Unix 可执行文件", "*")],
             )
         else:
             selected = filedialog.askopenfilename(
-                title="选择可执行文件",
+                title="选择要监控的 Windows 程序 (.exe)",
                 filetypes=[("Windows 可执行文件", "*.exe"), ("所有文件", "*.*")],
             )
         if selected:
@@ -789,7 +810,7 @@ class WatchdogGui:
             copy.grid(row=0, column=1, sticky="ew")
             display = Path(value).name if kind == "exe" else value
             ctk.CTkLabel(copy, text=display or value, text_color=TEXT, font=self._font(12, "bold"), anchor="w").pack(fill="x")
-            ctk.CTkLabel(copy, text=f"{TARGET_LABELS[kind]} · {value}", text_color=MUTED, font=self._font(10), anchor="w").pack(fill="x")
+            ctk.CTkLabel(copy, text=f"{self.target_labels[kind]} · {value}", text_color=MUTED, font=self._font(10), anchor="w").pack(fill="x")
             ctk.CTkButton(row, text="×", width=32, height=32, corner_radius=9, fg_color="transparent", hover_color=("#FDECEE", "#381D24"), text_color=MUTED, font=self._font(18), command=lambda item=index: self._remove_target(item)).grid(row=0, column=2, padx=11)
 
     def _load_targets(self) -> None:

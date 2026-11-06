@@ -15,8 +15,8 @@ Windows / macOS 长时进程性能监控与回溯工具。持续采集指定进�
 - 第一次启动自动创建 `~/Library/Application Support/WatchdogPerf/config.json`
 - CSV、日志、备份与报告默认写到
   `~/Library/Application Support/WatchdogPerf/data/`
-- GUI 可通过“应用/可执行文件、PID、进程名”三种方式添加监控目标，macOS
-  可浏览选择 `.app`，Windows 可浏览选择 `.exe`
+- GUI 在 macOS 显示“macOS 应用 (.app)”，直接选择 Finder 中的应用；在 Windows
+  显示“Windows 程序 (.exe)”，直接选择可执行文件；两端都支持进程名和 PID
 - 采样、CSV 目录、备份、结束条件与钉钉通知均可在 GUI 中修改并保存回
   `config.json`；应用稍后启动或重启也能重新发现
 
@@ -50,9 +50,62 @@ bash scripts/notarize_macos.sh dist/WatchdogPerf.app
 App Sandbox，因为它需要读取当前用户启动的其他进程；通常不需要管理员权限，但 macOS
 可能拒绝读取其他用户或受系统保护进程的详细路径，此时这些进程会被跳过，整机监控不受影响。
 
+## 图形界面使用
+
+桌面端采用现代圆角界面，左侧提供五个页面：
+
+- **运行概览**：显示本次监控的整机 CPU、目标内存、样本数量和当前输出文件；
+- **监控目标**：添加 Windows 程序、macOS 应用、进程名或 PID；
+- **采集与存储**：设置采样间隔、是否包含子进程、CSV 保存目录、落盘和备份策略；
+- **结束条件**：设置 CPU/内存阈值、持续时间、目标退出条件和触发动作；
+- **通知设置**：配置钉钉机器人 Webhook、Secret 和请求超时。
+
+修改后点击“保存配置”会立即写入当前用户的 `config.json`；点击“保存并开始”会先校验并
+保存全部界面设置，再启动监控。Windows 桌面包默认保存到：
+
+```text
+%LOCALAPPDATA%\WatchdogPerf\config.json
+```
+
+macOS 桌面包默认保存到：
+
+```text
+~/Library/Application Support/WatchdogPerf/config.json
+```
+
+### Windows 和 macOS 应该选择什么目标
+
+| 平台 | GUI 选项 | 应该选择的内容 | 示例 |
+|---|---|---|---|
+| Windows | Windows 程序 (.exe) | 程序实际的 `.exe` 文件 | `C:\Program Files\Demo\Demo.exe` |
+| macOS | macOS 应用 (.app) | Finder 里看到的 `.app` 应用包，不需要进入包内部 | `/Applications/Google Chrome.app` |
+| 两个平台 | 进程名 | 任务管理器或活动监视器中显示的进程名 | `ffmpeg.exe` / `Google Chrome` |
+| 两个平台 | PID | 当前正在运行的进程数字 PID | `12345` |
+
+macOS 的 `.app` 在文件系统中是“应用程序包目录”，不是单个 exe。真正运行的主程序通常位于：
+
+```text
+/Applications/应用名.app/Contents/MacOS/可执行文件
+```
+
+用户只需在 GUI 中选择外层 `.app`。WatchdogPerf 会自动把 `.app` 路径与包内
+`Contents/MacOS/` 下的实际进程对应起来；启用“包含子进程”后，该应用启动的辅助进程、
+渲染进程和工作进程也会继续被跟踪。因此不需要右键“显示包内容”，也不需要手工寻找
+`Contents/MacOS` 内部文件。
+
+下列情况更适合选择“进程名”而不是 `.app`：
+
+- 命令行工具，例如 `ffmpeg`、`python3`；
+- 没有 `.app` 外壳的后台服务；
+- 一个 `.app` 只负责启动另一个完全独立、且不属于其子进程树的服务；
+- 希望使用通配符匹配会反复启动的同类进程。
+
+配置文件中的字段仍命名为 `monitoring.exe_paths`，这是为了兼容旧版配置；在 macOS 上该字段
+同样可以保存 `.app` 路径，并不表示用户必须寻找 exe 文件。
+
 ## 快速开始
 
-依赖为 `psutil` 和 `matplotlib`；HTML 报告使用浏览器端的 ECharts，库已内嵌，离线也可打开：
+依赖为 `psutil`、`matplotlib` 和 `CustomTkinter`；HTML 报告使用浏览器端的 ECharts，库已内嵌，离线也可打开：
 
 ```shell
 pip install -r requirements.txt
