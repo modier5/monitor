@@ -37,7 +37,7 @@ class ExePathMatchingTests(unittest.TestCase):
 
     def test_exe_scan_discovers_running_process(self) -> None:
         helper = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(8)"],
+            [sys.executable, "-c", "import time; time.sleep(30)"],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         try:
