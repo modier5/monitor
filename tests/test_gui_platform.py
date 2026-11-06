@@ -65,6 +65,14 @@ class AppBundleResolutionTests(unittest.TestCase):
             self.assertIsNotNone(resolved)
             self.assertEqual(resolved.name, "helper")
 
+    def test_fallback_does_not_require_execute_bit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._make_bundle(Path(tmp), "Demo", "helper", declare=False)
+            (bundle / "Contents" / "MacOS" / "helper").chmod(0o644)
+            resolved = resolve_app_executable(bundle)
+            self.assertIsNotNone(resolved)
+            self.assertEqual(resolved.name, "helper")
+
     def test_rejects_non_bundle_and_broken_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

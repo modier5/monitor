@@ -7,8 +7,10 @@ accent and a tight, platform-aware type scale.
 
 from __future__ import annotations
 
+import ntpath
 import os
 import plistlib
+import posixpath
 import queue
 import subprocess
 import sys
@@ -147,10 +149,11 @@ def resolve_app_executable(app_path: str | Path) -> Path | None:
         candidate = macos_dir / executable_name
         if candidate.is_file():
             return candidate
-    for candidate in sorted(macos_dir.iterdir()):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
+    candidates = [item for item in sorted(macos_dir.iterdir()) if item.is_file()]
+    for candidate in candidates:
+        if os.access(candidate, os.X_OK):
             return candidate
-    return None
+    return candidates[0] if candidates else None
 
 
 def describe_target(kind: str, value: str, platform_name: str | None = None) -> tuple[str, str]:
@@ -160,9 +163,15 @@ def describe_target(kind: str, value: str, platform_name: str | None = None) -> 
         return value, "PID · 结束前持续跟踪指定进程"
     if kind == "name":
         return value, "进程名 · 包含子进程"
-    path = Path(value)
-    title = path.name or value
-    if path.suffix.lower() == ".app":
+    if platform_name == "win32":
+        trimmed = value.rstrip("\\/")
+        title = ntpath.basename(trimmed) or value
+        suffix = ntpath.splitext(trimmed)[1].lower()
+    else:
+        trimmed = value.rstrip("/")
+        title = posixpath.basename(trimmed) or value
+        suffix = posixpath.splitext(trimmed)[1].lower()
+    if suffix == ".app":
         return title, f"应用 · {value}"
     if platform_name == "darwin":
         return title, f"可执行文件 · {value}"
