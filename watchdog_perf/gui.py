@@ -44,13 +44,18 @@ TEXT = ("#0F1829", "#F2F6FC")
 TEXT_SECONDARY = ("#55647C", "#95A4B9")
 MUTED = ("#8090A6", "#7C8CA1")
 
-SIDEBAR_BG = ("#101B2C", "#0D1522")
-SIDEBAR_CARD = ("#18273C", "#131E2E")
-SIDEBAR_LINE = ("#263650", "#1D2939")
-SIDEBAR_TEXT = "#A5B3C6"
-SIDEBAR_MUTED = "#7E90A6"
-SIDEBAR_HOVER = ("#182840", "#15202F")
-NAV_ACTIVE_BG = ("#17383E", "#16323A")
+SIDEBAR_BG = ("#FFFFFF", "#0D1522")
+SIDEBAR_CARD = ("#F4F6FB", "#131E2E")
+SIDEBAR_LINE = ("#E4E9F2", "#1D2939")
+SIDEBAR_TEXT = ("#55647C", "#A5B3C6")
+SIDEBAR_MUTED = ("#8090A6", "#7E90A6")
+SIDEBAR_HOVER = ("#EFF3F9", "#15202F")
+SIDEBAR_TITLE = ("#0F1829", "#F4FAFF")
+SIDEBAR_ACCENT = ("#0A6B63", "#6FE3D2")
+SIDEBAR_ICON_IDLE = ("#8090A6", "#93A5BA")
+SIDEBAR_ICON_ACTIVE = ("#0FA396", "#6FE3D2")
+NAV_ACTIVE_BG = ("#E2F6F2", "#16323A")
+NAV_ACTIVE_TEXT = ("#0A6B63", "#FFFFFF")
 
 ACCENT = "#0FA396"
 ACCENT_HOVER = "#0C887E"
@@ -780,12 +785,16 @@ class WatchdogGui:
     # ------------------------------------------------------------------- shell
     def _build_ui(self) -> None:
         self.root.grid_columnconfigure(0, minsize=244)
-        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_columnconfigure(1, minsize=1)
+        self.root.grid_columnconfigure(2, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
         self._build_sidebar()
 
+        separator = ctk.CTkFrame(self.root, fg_color=SIDEBAR_LINE, width=1, corner_radius=0)
+        separator.grid(row=0, column=1, sticky="ns")
+
         main = ctk.CTkFrame(self.root, fg_color=BG, corner_radius=0)
-        main.grid(row=0, column=1, sticky="nsew")
+        main.grid(row=0, column=2, sticky="nsew")
         main.grid_columnconfigure(0, weight=1)
         main.grid_rowconfigure(1, weight=1)
 
@@ -849,7 +858,7 @@ class WatchdogGui:
         brand.grid_columnconfigure(1, weight=1)
         mark = ctk.CTkImage(light_image=brand_mark(38), dark_image=brand_mark(38), size=(38, 38))
         ctk.CTkLabel(brand, text="", image=mark, width=38).grid(row=0, column=0, padx=(0, 12))
-        self._label(brand, "WatchdogPerf", size=16, weight="bold", color="#F4FAFF").grid(
+        self._label(brand, "WatchdogPerf", size=16, weight="bold", color=SIDEBAR_TITLE).grid(
             row=0, column=1, sticky="w"
         )
 
@@ -878,8 +887,8 @@ class WatchdogGui:
         head = ctk.CTkFrame(footer, fg_color=SIDEBAR_CARD, corner_radius=0)
         head.grid(row=0, column=0, sticky="ew", padx=14, pady=(13, 0))
         head.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(head, text="", image=self._icon("check", ACCENT_TEXT, 14), width=14).grid(row=0, column=0, padx=(0, 7))
-        self._label(head, "配置已同步", size=12, weight="bold", color="#E7FBF6").grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(head, text="", image=self._icon("check", SIDEBAR_ACCENT, 14), width=14).grid(row=0, column=0, padx=(0, 7))
+        self._label(head, "配置已同步", size=12, weight="bold", color=SIDEBAR_ACCENT).grid(row=0, column=1, sticky="w")
         self.config_sync_label = self._label(
             footer,
             "config.json · 已加载",
@@ -924,7 +933,7 @@ class WatchdogGui:
             button.configure(
                 fg_color=NAV_ACTIVE_BG if active else SIDEBAR_CARD,
                 hover_color=NAV_ACTIVE_BG if active else SIDEBAR_HOVER,
-                text_color=WHITE if active else SIDEBAR_TEXT,
+                text_color=NAV_ACTIVE_TEXT if active else SIDEBAR_TEXT,
                 font=self._font(11, "bold" if active else "normal"),
             )
 
@@ -947,8 +956,8 @@ class WatchdogGui:
         frame.grid(row=row, column=0, sticky="ew", pady=2)
         frame.grid_propagate(False)
         frame.grid_columnconfigure(1, weight=1)
-        idle = self._icon(icon_name, "#93A5BA", 19)
-        active = self._icon(icon_name, ACCENT_TEXT, 19)
+        idle = self._icon(icon_name, SIDEBAR_ICON_IDLE, 19)
+        active = self._icon(icon_name, SIDEBAR_ICON_ACTIVE, 19)
         icon_label = ctk.CTkLabel(frame, text="", image=idle, width=19)
         icon_label.grid(row=0, column=0, padx=(15, 12), pady=13)
         text_label = self._label(frame, text, size=13, color=SIDEBAR_TEXT)
@@ -972,7 +981,18 @@ class WatchdogGui:
         item = self._nav_items.get(key)
         if item is None:
             return
-        item["frame"].configure(fg_color=SIDEBAR_HOVER if entering else SIDEBAR_BG)
+        self._paint_nav_item(item, SIDEBAR_HOVER if entering else SIDEBAR_BG)
+
+    def _paint_nav_item(self, item: dict, background) -> None:
+        """Repaint the pill and its transparent labels together.
+
+        The labels keep the background colour they detected at creation time,
+        so both the frame and the child widgets have to be updated explicitly,
+        otherwise a coloured pill would show square label patches inside it.
+        """
+        item["frame"].configure(fg_color=background)
+        item["icon"].configure(bg_color=background)
+        item["text"].configure(bg_color=background)
 
     def _set_stop_state(self, enabled: bool) -> None:
         if enabled:
@@ -1544,10 +1564,10 @@ class WatchdogGui:
                 frame.tkraise()
         for page_key, item in self._nav_items.items():
             active = page_key == key
-            item["frame"].configure(fg_color=NAV_ACTIVE_BG if active else SIDEBAR_BG)
+            self._paint_nav_item(item, NAV_ACTIVE_BG if active else SIDEBAR_BG)
             item["icon"].configure(image=item["active"] if active else item["idle"])
             item["text"].configure(
-                text_color=WHITE if active else SIDEBAR_TEXT,
+                text_color=NAV_ACTIVE_TEXT if active else SIDEBAR_TEXT,
                 font=self._font(13, "bold" if active else "normal"),
             )
         title, subtitle = titles[key]
