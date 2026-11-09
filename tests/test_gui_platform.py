@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 
 from watchdog_perf.gui import (
+    app_macos_directory,
     describe_target,
+    enclosing_app_bundle,
     resolve_app_executable,
     target_hint,
     target_labels,
@@ -80,6 +82,23 @@ class AppBundleResolutionTests(unittest.TestCase):
             broken = root / "Broken.app"
             broken.mkdir()
             self.assertIsNone(resolve_app_executable(broken))
+
+    def test_finds_bundle_and_macos_directory_from_inner_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._make_bundle(Path(tmp), "Demo", "Demo")
+            executable = bundle / "Contents" / "MacOS" / "Demo"
+            self.assertEqual(enclosing_app_bundle(executable), bundle)
+            self.assertEqual(
+                app_macos_directory(executable),
+                bundle / "Contents" / "MacOS",
+            )
+
+    def test_non_bundle_has_no_macos_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "demo"
+            path.write_text("demo", encoding="utf-8")
+            self.assertIsNone(enclosing_app_bundle(path))
+            self.assertIsNone(app_macos_directory(path))
 
 
 class TargetDescriptionTests(unittest.TestCase):

@@ -128,7 +128,7 @@ def target_hint(kind: str, platform_name: str | None = None) -> str:
     if kind == "name":
         return "填写活动监视器 / 任务管理器中的进程名，支持 * 通配符，例如 chrome*。"
     if platform_name == "darwin":
-        return "直接选择 .app 应用包即可，工具会自动匹配包内 Contents/MacOS 主程序；也可以粘贴包内可执行文件路径。"
+        return "推荐选择整个 .app；如需精确指定内部程序，点“包内程序…”可直接进入 Contents/MacOS。"
     if platform_name == "win32":
         return "选择程序实际的 .exe 文件；程序稍后启动也会被自动发现并开始采集。"
     return "选择应用或可执行文件路径。"
@@ -159,6 +159,24 @@ def resolve_app_executable(app_path: str | Path) -> Path | None:
         if os.access(candidate, os.X_OK):
             return candidate
     return candidates[0] if candidates else None
+
+
+def enclosing_app_bundle(path: str | Path) -> Path | None:
+    """Return the enclosing ``.app`` bundle for a bundle or inner path."""
+    candidate = Path(path).expanduser()
+    for item in (candidate, *candidate.parents):
+        if item.suffix.lower() == ".app":
+            return item
+    return None
+
+
+def app_macos_directory(app_path: str | Path) -> Path | None:
+    """Return ``Contents/MacOS`` when *app_path* belongs to a valid bundle."""
+    bundle = enclosing_app_bundle(app_path)
+    if bundle is None:
+        return None
+    macos_dir = bundle / "Contents" / "MacOS"
+    return macos_dir if macos_dir.is_dir() else None
 
 
 def describe_target(kind: str, value: str, platform_name: str | None = None) -> tuple[str, str]:
@@ -1204,9 +1222,26 @@ class WatchdogGui:
         self.target_entry = self._entry(input_row, self.target_value_var, placeholder=target_placeholder("exe"))
         self.target_entry.grid(row=0, column=0, sticky="ew")
         self.browse_target_button = self._button(
-            input_row, "浏览", self._browse_target, kind="secondary", icon_name="folder", width=92
+            input_row,
+            "选择 .app" if sys.platform == "darwin" else "浏览",
+            self._browse_target,
+            kind="secondary",
+            icon_name="folder",
+            width=104 if sys.platform == "darwin" else 92,
         )
         self.browse_target_button.grid(row=0, column=1, padx=(8, 0))
+        next_column = 2
+        if sys.platform == "darwin":
+            self.browse_inner_button = self._button(
+                input_row,
+                "包内程序…",
+                self._browse_inner_executable,
+                kind="secondary",
+                icon_name="terminal",
+                width=112,
+            )
+            self.browse_inner_button.grid(row=0, column=2, padx=(8, 0))
+            next_column = 3
         self._button(
             input_row,
             "添加",
@@ -1215,7 +1250,7 @@ class WatchdogGui:
             icon_name="plus",
             width=96,
             bold=True,
-        ).grid(row=0, column=2, padx=(8, 0))
+        ).grid(row=0, column=next_column, padx=(8, 0))
 
         self.target_hint_label = self._label(
             left,
@@ -1591,6 +1626,8 @@ class WatchdogGui:
         self.target_entry.configure(placeholder_text=target_placeholder(kind))
         self.target_hint_label.configure(text=target_hint(kind))
         self.browse_target_button.configure(state="normal" if kind == "exe" else "disabled")
+        if hasattr(self, "browse_inner_button"):
+            self.browse_inner_button.configure(state="normal" if kind == "exe" else "disabled")
         self.target_value_var.set("")
         if focus:
             self.target_entry.focus_set()
@@ -1612,6 +1649,44 @@ class WatchdogGui:
                 title="选择要监控的 Windows 程序 (.exe)",
                 filetypes=[("Windows 可执行文件", "*.exe"), ("所有文件", "*.*")],
             )
+        if selected:
+            self.target_value_var.set(self._clean_target_path(selected))
+
+    def _browse_inner_executable(self) -> None:
+        """Open a selected app bundle directly at its Contents/MacOS folder."""
+        current = self._clean_target_path(self.target_value_var.get())
+        bundle = enclosing_app_bundle(current) if current else None
+        if bundle is None or not bundle.is_dir():
+            handled, selected = choose_macos_target()
+            if not handled:
+                selected = filedialog.askopenfilename(
+                    title="先选择一个 macOS 应用程序 (.app)",
+                    initialdir="/Applications",
+                    filetypes=[("macOS 应用程序", "*.app"), ("所有文件", "*")],
+                )
+            if not selected:
+                return
+            bundle = enclosing_app_bundle(selected)
+        if bundle is None:
+            messagebox.showwarning(
+                "需要选择应用程序",
+                "请先选择一个 .app 应用程序，然后再选择包内可执行文件。",
+            )
+            return
+        macos_dir = app_macos_directory(bundle)
+        if macos_dir is None:
+            messagebox.showwarning(
+                "找不到包内程序",
+                f"{bundle.name} 中没有找到 Contents/MacOS 目录。",
+            )
+            return
+        main_executable = resolve_app_executable(bundle)
+        selected = filedialog.askopenfilename(
+            title=f"选择 {bundle.name} 内的可执行文件",
+            initialdir=str(macos_dir),
+            initialfile=main_executable.name if main_executable is not None else "",
+            filetypes=[("Unix 可执行文件", "*"), ("所有文件", "*")],
+        )
         if selected:
             self.target_value_var.set(self._clean_target_path(selected))
 

@@ -32,9 +32,9 @@ Windows / macOS 长时进程性能监控与回溯工具。持续采集指定进�
 - 第一次启动自动创建 `~/Library/Application Support/WatchdogPerf/config.json`
 - CSV、日志、备份与报告默认写到
   `~/Library/Application Support/WatchdogPerf/data/`
-- GUI 在 macOS 显示“macOS 应用 (.app)”，点“浏览”会打开系统选择器，可直接选中
-  `应用程序` 里的 `.app` 应用包，不需要右键“显示包内容”；也支持粘贴包内
-  `Contents/MacOS/` 可执行文件的完整路径。Windows 显示“Windows 程序 (.exe)”，
+- GUI 在 macOS 显示“macOS 应用 (.app)”并提供两个按钮：“选择 .app”用于选择整个应用包，
+  “包内程序…”会在选定应用后直接进入其 `Contents/MacOS` 目录，以便选择实际 Unix
+  可执行文件，不需要手工复制路径。Windows 显示“Windows 程序 (.exe)”，
   直接选择可执行文件；两端都支持进程名和 PID
 - 采样、CSV 目录、备份、结束条件与钉钉通知均可在 GUI 中修改并保存回
   `config.json`；应用稍后启动或重启也能重新发现
@@ -102,7 +102,7 @@ macOS 桌面包默认保存到：
 |---|---|---|---|
 | Windows | Windows 程序 (.exe) | 程序实际的 `.exe` 文件 | `C:\Program Files\Demo\Demo.exe` |
 | macOS | macOS 应用 (.app) | Finder 里看到的 `.app` 应用包（推荐） | `/Applications/Google Chrome.app` |
-| macOS | macOS 应用 (.app) | 也支持包内的 Unix 可执行文件 | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
+| macOS | 包内程序… | 精确选择 `.app/Contents/MacOS` 中的 Unix 可执行文件 | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
 | 两个平台 | 进程名 | 活动监视器或任务管理器中的进程名 | `Google Chrome` / `ffmpeg.exe` |
 | 两个平台 | PID | 当前正在运行的进程数字 PID | `12345` |
 
@@ -112,13 +112,15 @@ macOS 的 `.app` 在文件系统中是“应用程序包目录”，不是单个
 /Applications/应用名.app/Contents/MacOS/可执行文件
 ```
 
-**推荐做法**：在“监控目标”页点“浏览”，弹出的 macOS 系统选择器可以直接选中 `应用程序`
+**推荐做法**：在“监控目标”页点“选择 .app”，弹出的 macOS 系统选择器可以直接选中 `应用程序`
 文件夹里的 `.app`，不需要右键“显示包内容”。WatchdogPerf 会读取 `Contents/Info.plist`
 中的 `CFBundleExecutable`，把 `.app` 与包内 `Contents/MacOS/` 下的实际进程对应起来；
 启用“包含子进程”后，该应用启动的辅助进程、渲染进程和工作进程也会继续被跟踪。
 
-**另一种同样可行的写法**：如果你已经打开包内容并找到了 `Contents/MacOS/` 下那个没有后缀的
-Unix 可执行文件，也可以把它的完整路径加进目标。两种写法都支持：
+**精确选择包内程序**：点击“包内程序…”，先选择一个 `.app`。WatchdogPerf 会绕过 macOS
+文件选择器把应用包视为单一文件的限制，直接把第二个选择窗口打开到该应用的
+`Contents/MacOS` 目录，并默认定位到 `Info.plist` 声明的主程序。选中后，完整路径会自动
+填入目标输入框。两种写法都支持：
 
 - 填 `.app`：按“包内主程序”匹配，应用升级、重启后仍然有效；
 - 填包内可执行文件：按精确路径匹配，同样会在进程重启后自动重新绑定。
@@ -133,8 +135,9 @@ Unix 可执行文件，也可以把它的完整路径加进目标。两种写法
 - 一个 `.app` 只负责启动另一个完全独立、且不属于其子进程树的服务；
 - 希望使用通配符匹配会反复启动的同类进程。
 
-> 小提示：如果系统选择器里一时找不到目标应用，可以在 Finder 中把 `.app` 直接拖进输入框，
-> 或右键“显示包内容”，把 `Contents/MacOS/` 下的可执行文件路径粘贴进来。
+> 手工复制路径的方法：在 Finder 中右键 `.app` →“显示包内容”→ `Contents/MacOS`，选中
+> 目标文件后按 `Option + Command + C`，即可复制完整 POSIX 路径；不过通常直接使用 GUI 的
+> “包内程序…”更方便。
 
 配置文件中的字段仍命名为 `monitoring.exe_paths`，这是为了兼容旧版配置；在 macOS 上该字段
 同样可以保存 `.app` 路径或包内可执行文件路径，并不表示用户必须寻找 exe 文件。
