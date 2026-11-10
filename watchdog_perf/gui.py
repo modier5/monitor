@@ -129,8 +129,9 @@ def target_hint(kind: str, platform_name: str | None = None) -> str:
         return "填写活动监视器 / 任务管理器中的进程名，支持 * 通配符，例如 chrome*。"
     if platform_name == "darwin":
         return (
-            "推荐选整个 .app；要精确指定包内程序时点“包内程序…”："
-            "先选应用，再从 Contents/MacOS 列表中选择。"
+            "推荐选整个 .app；要精确指定可执行文件时点“包内程序…”："
+            "它会列出包内 Contents/MacOS、Frameworks、Resources 等处的程序。"
+            "不在应用包内的程序（如 /usr/local/bin/ffmpeg）可直接粘贴完整路径。"
         )
     if platform_name == "win32":
         return "选择程序实际的 .exe 文件；程序稍后启动也会被自动发现并开始采集。"
@@ -182,44 +183,130 @@ def app_macos_directory(app_path: str | Path) -> Path | None:
     return macos_dir if macos_dir.is_dir() else None
 
 
+MH_EXECUTE = 0x2
+MAX_BUNDLE_PROGRAMS = 400
+_BUNDLE_SKIP_DIRS = {"_CodeSignature", "CodeResources"}
+
+
+def _macho_filetype(path: Path) -> int | None:
+    """Return Mach-O ``filetype`` (2 = MH_EXECUTE) or ``None`` for non-binaries."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(16)
+    except OSError:
+        return None
+    if len(head) < 8:
+        return None
+
+    def parse_at(offset: int, header: bytes) -> int | None:
+        magic = int.from_bytes(header[0:4], "big")
+        if magic in (0xFEEDFACE, 0xFEEDFACF) and len(header) >= 16:
+            return int.from_bytes(header[12:16], "little")
+        return None
+
+    filetype = parse_at(0, head)
+    if filetype is not None:
+        return filetype
+
+    magic = int.from_bytes(head[0:4], "big")
+    if magic not in (0xCAFEBABE, 0xCAFEBABF):
+        return None
+    # Universal binary: follow the first slice and read its own header.
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0)
+            arch = handle.read(32)
+            if len(arch) < 32:
+                return None
+            if magic == 0xCAFEBABE:
+                offset = int.from_bytes(arch[16:20], "big")
+            else:
+                offset = int.from_bytes(arch[16:24], "big")
+            handle.seek(offset)
+            slice_header = handle.read(16)
+    except OSError:
+        return None
+    return parse_at(offset, slice_header)
+
+
+def looks_like_program(path: Path) -> bool:
+    """True for launchable Mach-O executables and ``#!`` scripts."""
+    try:
+        if not path.is_file():
+            return False
+    except OSError:
+        return False
+    if _macho_filetype(path) == MH_EXECUTE:
+        return True
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(2)
+    except OSError:
+        return False
+    return head == b"#!"
+
+
 def list_bundle_executables(app_path: str | Path) -> list[Path]:
-    """List the files inside ``Contents/MacOS``, most likely target first.
+    """List launchable programs anywhere inside a ``.app`` bundle.
 
     macOS file panels treat a ``.app`` as an opaque file and refuse to descend
-    into it, so the desktop UI shows this list itself instead of relying on the
-    system picker to "enter" the bundle.
+    into it, so the desktop UI walks the bundle itself. Helper programs are not
+    always in ``Contents/MacOS``: Electron-style bundles keep tool binaries in
+    ``Contents/Resources``, XPC services live in ``Contents/XPCServices`` and
+    nested helper apps under ``Contents/Frameworks``, so the whole bundle is
+    scanned for Mach-O executables and ``#!`` scripts.
     """
     bundle = enclosing_app_bundle(app_path)
-    if bundle is None:
-        return []
-    macos_dir = app_macos_directory(bundle)
-    if macos_dir is None:
-        return []
-    try:
-        files = [item for item in macos_dir.iterdir() if item.is_file()]
-    except OSError:
+    if bundle is None or not bundle.is_dir():
         return []
     main = resolve_app_executable(bundle)
+    macos_dir = bundle / "Contents" / "MacOS"
+    programs: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(bundle):
+        dirnames[:] = sorted(
+            (name for name in dirnames if name not in _BUNDLE_SKIP_DIRS),
+            key=str.casefold,
+        )
+        for name in filenames:
+            candidate = Path(dirpath) / name
+            if looks_like_program(candidate):
+                programs.append(candidate)
+        if len(programs) >= MAX_BUNDLE_PROGRAMS:
+            break
+    if not programs:
+        # Fall back to the declared main binary so a user can still pick it.
+        return [main] if main is not None else []
 
     def sort_key(item: Path) -> tuple:
+        try:
+            in_macos_dir = macos_dir in item.parents
+        except OSError:
+            in_macos_dir = False
+        try:
+            depth = len(item.relative_to(bundle).parts)
+        except ValueError:
+            depth = 99
         return (
             item != main,
-            not os.access(item, os.X_OK),
-            item.name.casefold(),
+            not in_macos_dir,
+            depth,
+            str(item).casefold(),
         )
 
-    return sorted(files, key=sort_key)
+    return sorted(programs[:MAX_BUNDLE_PROGRAMS], key=sort_key)
 
 
-def bundle_executable_label(path: Path) -> str:
-    """Describe one candidate inside ``Contents/MacOS`` for the picker."""
+def bundle_program_detail(path: Path, bundle: Path) -> str:
+    """Return the ``Contents/...`` location plus size, for the picker rows."""
+    try:
+        location = str(path.relative_to(bundle)).replace(os.sep, "/")
+    except ValueError:
+        location = str(path)
     try:
         size_kb = max(1, round(path.stat().st_size / 1024))
     except OSError:
         size_kb = 0
-    size_text = f"{size_kb:,} KB" if size_kb else "大小未知"
-    executable = "可执行" if os.access(path, os.X_OK) else "普通文件"
-    return f"{path.name} · {executable} · {size_text}"
+    return f"{location} · {size_kb:,} KB" if size_kb else location
 
 
 def describe_target(kind: str, value: str, platform_name: str | None = None) -> tuple[str, str]:
@@ -1716,18 +1803,22 @@ class WatchdogGui:
                 )
             if not selected:
                 return
-            bundle = enclosing_app_bundle(selected)
+            selected_path = Path(selected).expanduser()
+            bundle = enclosing_app_bundle(selected_path)
+            if bundle is None:
+                # A standalone executable outside any bundle: use it as-is.
+                if selected_path.is_file():
+                    self.target_value_var.set(self._clean_target_path(selected))
+                    return
+                messagebox.showwarning(
+                    "需要选择应用程序或程序",
+                    "选中的不是 .app 应用包，也不是可执行文件。",
+                )
+                return
         if bundle is None or not bundle.is_dir():
             messagebox.showwarning(
                 "需要选择应用程序",
                 "请先选择一个 .app 应用程序，然后再选择包内可执行文件。",
-            )
-            return
-        macos_dir = app_macos_directory(bundle)
-        if macos_dir is None:
-            messagebox.showwarning(
-                "找不到包内程序",
-                f"{bundle.name} 中没有找到 Contents/MacOS 目录。",
             )
             return
         chosen = self._ask_bundle_executable(bundle)
@@ -1735,12 +1826,13 @@ class WatchdogGui:
             self.target_value_var.set(str(chosen))
 
     def _ask_bundle_executable(self, bundle: Path) -> Path | None:
-        """Modal window listing ``Contents/MacOS`` entries of *bundle*."""
+        """Modal window listing launchable programs anywhere inside *bundle*."""
         candidates = list_bundle_executables(bundle)
         if not candidates:
             messagebox.showwarning(
                 "包内没有程序",
-                f"{bundle.name} 的 Contents/MacOS 目录是空的。",
+                f"{bundle.name} 中没有找到可执行程序。\n"
+                "可以改用“选择 .app”直接监控整个应用，或选择“进程名”。",
             )
             return None
 
@@ -1749,7 +1841,7 @@ class WatchdogGui:
         top.title(f"选择 {bundle.name} 内的程序")
         top.configure(fg_color=BG)
         top.resizable(False, False)
-        width, height = 560, min(520, 190 + 54 * len(candidates))
+        width, height = 620, 640
         self._center_child(top, width, height)
         try:
             top.transient(self.root)
@@ -1757,25 +1849,34 @@ class WatchdogGui:
             pass
 
         header = ctk.CTkFrame(top, fg_color=BG, corner_radius=0)
-        header.pack(fill="x", padx=22, pady=(20, 0))
+        header.pack(fill="x", padx=22, pady=(18, 0))
         self._label(header, "选择包内程序", size=15, weight="bold").pack(anchor="w")
         self._label(
             header,
-            f"{bundle.name} · Contents/MacOS",
+            f"{bundle.name} · 共找到 {len(candidates)} 个可执行程序",
             size=11,
             color=TEXT_SECONDARY,
         ).pack(anchor="w", pady=(4, 0))
         self._label(
             header,
-            "这里列出包内的全部文件；没有后缀的可执行文件就是应用真正运行时启动的程序。",
+            "程序可能位于 Contents/MacOS，也可能在 Frameworks、Resources、XPCServices 等处；"
+            "列表按“主程序 → Contents/MacOS → 其他目录”排序。",
             size=11,
             color=TEXT_SECONDARY,
-            wraplength=510,
+            wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(6, 0))
 
+        search_var = tk.StringVar()
+        search_row = ctk.CTkFrame(top, fg_color=BG, corner_radius=0)
+        search_row.pack(fill="x", padx=22, pady=(12, 0))
+        search_row.grid_columnconfigure(0, weight=1)
+        self._entry(search_row, search_var, placeholder="按名称或路径筛选…", height=36).grid(
+            row=0, column=0, sticky="ew"
+        )
+
         body = ctk.CTkFrame(top, fg_color=SURFACE, border_width=1, border_color=BORDER, corner_radius=14)
-        body.pack(fill="both", expand=True, padx=22, pady=(14, 0))
+        body.pack(fill="both", expand=True, padx=22, pady=(10, 0))
         scroll = ctk.CTkScrollableFrame(
             body,
             fg_color=SURFACE,
@@ -1789,75 +1890,111 @@ class WatchdogGui:
 
         index_var = tk.IntVar(value=0)
         result: dict[str, Path | None] = {"path": None}
-        labels: list[str] = []
-        for row, candidate in enumerate(candidates):
-            card = ctk.CTkFrame(scroll, fg_color=SURFACE_ALT, corner_radius=11)
-            card.grid(row=row, column=0, sticky="ew", padx=(0, 6), pady=(0, 6))
-            card.grid_columnconfigure(0, weight=1)
-            badge = "主程序 · " if candidate == main else ""
-            labels.append(f"{badge}{bundle_executable_label(candidate)}")
-            radio = ctk.CTkRadioButton(
-                card,
-                text=labels[-1],
-                variable=index_var,
-                value=row,
-                fg_color=SURFACE_ALT,
-                hover_color=SURFACE_HOVER,
-                border_color=BORDER,
-                radiobutton_width=16,
-                radiobutton_height=16,
-                text_color=TEXT,
-                font=self._font(12),
-                command=None,
-            )
-            radio.grid(row=0, column=0, sticky="w", padx=12, pady=9)
-            self._label(
-                card,
-                f"Contents/MacOS/{candidate.name}",
-                size=10,
-                color=TEXT_SECONDARY,
-            ).grid(row=1, column=0, sticky="w", padx=(38, 12), pady=(0, 8))
-            for widget in (
-                card,
-                radio,
-                getattr(radio, "_text_label", None),
-                getattr(radio, "_canvas", None),
-            ):
-                if widget is None:
-                    continue
-                widget.bind(
-                    "<Double-Button-1>",
-                    lambda _event: self._confirm_picker(top, result, candidates, index_var),
+        visible: list[Path] = []
+
+        def render(filter_text: str = "") -> None:
+            nonlocal visible
+            for child in scroll.winfo_children():
+                child.destroy()
+            needle = filter_text.strip().casefold()
+            visible = [
+                item
+                for item in candidates
+                if not needle
+                or needle in item.name.casefold()
+                or needle in bundle_program_detail(item, bundle).casefold()
+            ]
+            if not visible:
+                self._label(
+                    scroll,
+                    "没有匹配的程序，换个关键字试试。",
+                    size=11,
+                    color=TEXT_SECONDARY,
+                ).grid(row=0, column=0, sticky="w", padx=12, pady=18)
+                return
+            if index_var.get() >= len(visible):
+                index_var.set(0)
+            for row, candidate in enumerate(visible):
+                card = ctk.CTkFrame(scroll, fg_color=SURFACE_ALT, corner_radius=11)
+                card.grid(row=row, column=0, sticky="ew", padx=(0, 6), pady=(0, 6))
+                card.grid_columnconfigure(0, weight=1)
+                badge = "主程序 · " if candidate == main else ""
+                radio = ctk.CTkRadioButton(
+                    card,
+                    text=f"{badge}{candidate.name}",
+                    variable=index_var,
+                    value=row,
+                    fg_color=SURFACE_ALT,
+                    hover_color=SURFACE_HOVER,
+                    border_color=BORDER,
+                    radiobutton_width=16,
+                    radiobutton_height=16,
+                    text_color=TEXT,
+                    font=self._font(12),
                 )
+                radio.grid(row=0, column=0, sticky="w", padx=12, pady=(9, 2))
+                self._label(
+                    card,
+                    bundle_program_detail(candidate, bundle),
+                    size=10,
+                    color=TEXT_SECONDARY,
+                ).grid(row=1, column=0, sticky="w", padx=(38, 12), pady=(0, 8))
+                for widget in (
+                    card,
+                    radio,
+                    getattr(radio, "_text_label", None),
+                    getattr(radio, "_canvas", None),
+                ):
+                    if widget is None:
+                        continue
+                    widget.bind(
+                        "<Button-1>",
+                        lambda _event, value=row: index_var.set(value),
+                    )
+                    widget.bind(
+                        "<Double-Button-1>",
+                        lambda _event, value=row: self._confirm_picker(
+                            top, result, visible, index_var, forced_index=value
+                        ),
+                    )
+
+        search_var.trace_add("write", lambda *_args: render(search_var.get()))
+        render()
 
         footer = ctk.CTkFrame(top, fg_color=BG, corner_radius=0)
-        footer.pack(fill="x", padx=22, pady=(14, 20))
+        footer.pack(fill="x", padx=22, pady=(12, 18))
         footer.grid_columnconfigure(0, weight=1)
         self._label(
             footer,
-            "选择后可直接粘贴路径，也可以在输入框里手工修改。",
+            "选中后会自动填入输入框，也可以在输入框里手工修改。",
             size=10,
             color=MUTED,
         ).grid(row=0, column=0, sticky="w")
         self._button(
             footer,
             "取消",
-            lambda: self._confirm_picker(top, result, candidates, index_var, confirmed=False),
+            lambda: self._confirm_picker(top, result, visible, index_var, confirmed=False),
             kind="secondary",
             width=88,
         ).grid(row=0, column=1, padx=(8, 6))
         self._button(
             footer,
             "使用该程序",
-            lambda: self._confirm_picker(top, result, candidates, index_var),
+            lambda: self._confirm_picker(top, result, visible, index_var),
             kind="primary",
             width=112,
             bold=True,
         ).grid(row=0, column=2)
 
-        top.bind("<Escape>", lambda _event: self._confirm_picker(top, result, candidates, index_var, confirmed=False))
-        top.bind("<Return>", lambda _event: self._confirm_picker(top, result, candidates, index_var))
-        top.protocol("WM_DELETE_WINDOW", lambda: self._confirm_picker(top, result, candidates, index_var, confirmed=False))
+        top.bind(
+            "<Escape>",
+            lambda _event: self._confirm_picker(top, result, visible, index_var, confirmed=False),
+        )
+        top.bind("<Return>", lambda _event: self._confirm_picker(top, result, visible, index_var))
+        top.protocol(
+            "WM_DELETE_WINDOW",
+            lambda: self._confirm_picker(top, result, visible, index_var, confirmed=False),
+        )
         try:
             top.grab_set()
             top.focus_force()
@@ -1866,9 +2003,19 @@ class WatchdogGui:
         self.root.wait_window(top)
         return result["path"]
 
-    def _confirm_picker(self, top, result: dict, candidates: list[Path], index_var: tk.IntVar, *, confirmed: bool = True) -> None:
-        if confirmed:
-            index = max(0, min(index_var.get(), len(candidates) - 1))
+    def _confirm_picker(
+        self,
+        top,
+        result: dict,
+        candidates: list[Path],
+        index_var: tk.IntVar,
+        *,
+        confirmed: bool = True,
+        forced_index: int | None = None,
+    ) -> None:
+        if confirmed and candidates:
+            index = forced_index if forced_index is not None else index_var.get()
+            index = max(0, min(index, len(candidates) - 1))
             result["path"] = candidates[index]
         try:
             top.grab_release()

@@ -7,10 +7,11 @@ from pathlib import Path
 
 from watchdog_perf.gui import (
     app_macos_directory,
-    bundle_executable_label,
+    bundle_program_detail,
     describe_target,
     enclosing_app_bundle,
     list_bundle_executables,
+    looks_like_program,
     resolve_app_executable,
     target_hint,
     target_labels,
@@ -38,6 +39,7 @@ class GuiPlatformLabelsTests(unittest.TestCase):
         hint = target_hint("exe", "darwin")
         self.assertIn(".app", hint)
         self.assertIn("Contents/MacOS", hint)
+        self.assertIn("包内程序", hint)
         self.assertNotIn(".exe", hint)
 
     def test_windows_hint_mentions_exe(self) -> None:
@@ -103,7 +105,7 @@ class AppBundleResolutionTests(unittest.TestCase):
             self.assertIsNone(app_macos_directory(path))
 
     def test_lists_bundle_programs_with_main_first(self) -> None:
-        """The in-app picker must see Contents/MacOS without any file dialog."""
+        """The in-app picker must find programs without any file dialog."""
         with tempfile.TemporaryDirectory() as tmp:
             bundle = self._make_bundle(Path(tmp), "Demo", "Demo")
             macos_dir = bundle / "Contents" / "MacOS"
@@ -112,13 +114,70 @@ class AppBundleResolutionTests(unittest.TestCase):
 
             candidates = list_bundle_executables(bundle)
             names = [item.name for item in candidates]
-            self.assertEqual(set(names), {"Demo", "Helper", "notes.txt"})
-            self.assertEqual(names[0], "Demo")
+            self.assertEqual(names, ["Demo", "Helper"])
             # Works from an inner executable path as well as the bundle root.
             self.assertEqual(
                 [item.name for item in list_bundle_executables(macos_dir / "Demo")],
                 names,
             )
+
+    def test_finds_programs_outside_contents_macos(self) -> None:
+        """Helper binaries may live in Resources, XPCServices or nested apps."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._make_bundle(Path(tmp), "Demo", "Demo")
+            resources = bundle / "Contents" / "Resources"
+            resources.mkdir()
+            (resources / "ffmpeg").write_text("#!/bin/sh\n", encoding="utf-8")
+            xpc = bundle / "Contents" / "XPCServices" / "Worker.xpc" / "Contents" / "MacOS"
+            xpc.mkdir(parents=True)
+            (xpc / "Worker").write_text("#!/bin/sh\n", encoding="utf-8")
+
+            names = [item.name for item in list_bundle_executables(bundle)]
+            self.assertIn("ffmpeg", names)
+            self.assertIn("Worker", names)
+            # Main executable still sorts first.
+            self.assertEqual(names[0], "Demo")
+
+    def test_skips_code_signature_and_non_programs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._make_bundle(Path(tmp), "Demo", "Demo")
+            signature = bundle / "Contents" / "_CodeSignature"
+            signature.mkdir()
+            (signature / "script").write_text("#!/bin/sh\n", encoding="utf-8")
+            resources = bundle / "Contents" / "Resources"
+            resources.mkdir()
+            (resources / "logo.png").write_bytes(b"\x89PNG\r\n")
+
+            names = [item.name for item in list_bundle_executables(bundle)]
+            self.assertNotIn("script", names)
+            self.assertNotIn("logo.png", names)
+
+    def test_detects_macho_executables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "bin"
+            header = (
+                (0xFEEDFACF).to_bytes(4, "big")
+                + (0x0100000C).to_bytes(4, "little")
+                + (0x00000000).to_bytes(4, "little")
+                + (0x00000002).to_bytes(4, "little")
+            )
+            binary.write_bytes(header + b"\x00" * 32)
+            self.assertTrue(looks_like_program(binary))
+
+            dylib = root / "lib.dylib"
+            dylib.write_bytes(
+                (0xFEEDFACF).to_bytes(4, "big")
+                + (0x0100000C).to_bytes(4, "little")
+                + (0x00000000).to_bytes(4, "little")
+                + (0x00000006).to_bytes(4, "little")
+                + b"\x00" * 32
+            )
+            self.assertFalse(looks_like_program(dylib))
+
+            text = root / "readme.txt"
+            text.write_text("plain text\n", encoding="utf-8")
+            self.assertFalse(looks_like_program(text))
 
     def test_lists_nothing_for_missing_or_plain_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,12 +189,12 @@ class AppBundleResolutionTests(unittest.TestCase):
             broken.mkdir()
             self.assertEqual(list_bundle_executables(broken), [])
 
-    def test_bundle_executable_label_mentions_name_and_size(self) -> None:
+    def test_bundle_program_detail_shows_relative_location(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bundle = self._make_bundle(Path(tmp), "Demo", "Demo")
-            label = bundle_executable_label(bundle / "Contents" / "MacOS" / "Demo")
-            self.assertTrue(label.startswith("Demo ·"))
-            self.assertIn("KB", label)
+            detail = bundle_program_detail(bundle / "Contents" / "MacOS" / "Demo", bundle)
+            self.assertTrue(detail.startswith("Contents/MacOS/Demo"))
+            self.assertIn("KB", detail)
 
 
 class TargetDescriptionTests(unittest.TestCase):

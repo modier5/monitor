@@ -101,8 +101,9 @@ macOS 桌面包默认保存到：
 | 平台 | GUI 选项 | 推荐选择 | 示例 |
 |---|---|---|---|
 | Windows | Windows 程序 (.exe) | 程序实际的 `.exe` 文件 | `C:\Program Files\Demo\Demo.exe` |
-| macOS | macOS 应用 (.app) | Finder 里看到的 `.app` 应用包（推荐） | `/Applications/Google Chrome.app` |
-| macOS | 包内程序… | 精确选择 `.app/Contents/MacOS` 中的 Unix 可执行文件 | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
+| macOS | 选择 .app | 应用本身（推荐）：Finder 里看到的 `.app` 应用包 | `/Applications/Google Chrome.app` |
+| macOS | 包内程序… | 应用包内**任意位置**的可执行文件（主程序、辅助进程、XPC 服务等） | `/Applications/Google Chrome.app/Contents/Frameworks/…/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper` |
+| macOS | 包内程序…（外部程序） | 不在 `.app` 里的独立可执行文件，直接选或粘贴路径 | `/usr/local/bin/ffmpeg` |
 | 两个平台 | 进程名 | 活动监视器或任务管理器中的进程名 | `Google Chrome` / `ffmpeg.exe` |
 | 两个平台 | PID | 当前正在运行的进程数字 PID | `12345` |
 
@@ -112,19 +113,32 @@ macOS 的 `.app` 在文件系统中是“应用程序包目录”，不是单个
 /Applications/应用名.app/Contents/MacOS/可执行文件
 ```
 
-**推荐做法**：在“监控目标”页点“选择 .app”，弹出的 macOS 系统选择器可以直接选中 `应用程序`
-文件夹里的 `.app`，不需要右键“显示包内容”。WatchdogPerf 会读取 `Contents/Info.plist`
-中的 `CFBundleExecutable`，把 `.app` 与包内 `Contents/MacOS/` 下的实际进程对应起来；
-启用“包含子进程”后，该应用启动的辅助进程、渲染进程和工作进程也会继续被跟踪。
+**场景一：监控整个应用（推荐）**——在“监控目标”页点“选择 .app”，弹出的 macOS 系统选择器
+会直接选中 `应用程序` 文件夹里的 `.app`，不需要右键“显示包内容”。WatchdogPerf 会读取
+`Contents/Info.plist` 中的 `CFBundleExecutable`，把 `.app` 与包内 `Contents/MacOS/` 下的
+实际进程对应起来；启用“包含子进程”后，该应用启动的辅助进程、渲染进程和工作进程也会继续被跟踪。
 
-**精确选择包内程序**：点击“包内程序…”，先选择一个 `.app`，随后 WatchdogPerf 会弹出自己的
-程序列表，列出该应用 `Contents/MacOS` 目录中的全部文件（主程序排在最前，并标注“主程序”）。
-这是刻意绕开 macOS 文件选择器的限制：系统面板把 `.app` 当作单个文件，**无法进入包内部**，
-所以“进入应用选程序”由应用自己完成，不受系统版本影响。选中后完整路径会自动填入目标输入框。
-两种写法都支持：
+**场景二：精确监控包内某个可执行文件**——点击“包内程序…”，先选择位于哪个 `.app`，随后
+WatchdogPerf 会弹出自己的程序列表。
+
+- macOS 文件选择器把 `.app` 当作单个文件、**无法进入包内部**，所以这一步由应用自己完成；
+- 列表扫描**整个应用包**，不只看 `Contents/MacOS`：`Contents/Frameworks`（含嵌套的
+  `*Helper.app`）、`Contents/Resources`（很多 Electron 应用把 `ffmpeg` 放在这里）、
+  `Contents/XPCServices`、`Contents/Helpers` 等位置的可执行文件都会出现；
+- 只列出真正可执行的程序（Mach-O `MH_EXECUTE` 或无后缀的 `#!` 脚本），
+  自动跳过 dylib、图片等资源，并按“主程序 → Contents/MacOS → 其他目录”排序；
+- 条目较多时可用顶部搜索框按名称或路径筛选；双击、回车或“使用该程序”确认，
+  `Esc` 取消。选中后完整路径自动填入输入框。
+
+**场景三：程序不在应用包里**（例如命令行工具、后台服务）——直接在输入框粘贴完整路径，
+或在“包内程序…”弹出的系统面板里直接选中该可执行文件，WatchdogPerf 会原样使用它。
+也可以改用“进程名”，对会反复启动的同类进程更省事。
+
+三种写法都支持：
 
 - 填 `.app`：按“包内主程序”匹配，应用升级、重启后仍然有效；
-- 填包内可执行文件：按精确路径匹配，同样会在进程重启后自动重新绑定。
+- 填包内可执行文件：按精确路径匹配，同样会在进程重启后自动重新绑定；
+- 填包外可执行文件：同上，按精确路径匹配。
 
 只有当某个应用把真正干活的进程交给**不属于它**的独立服务时（不在它的子进程树里），才需要
 额外把那个进程名也加进目标，或使用 `monitoring.apps` 配置。
