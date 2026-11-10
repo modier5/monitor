@@ -128,7 +128,10 @@ def target_hint(kind: str, platform_name: str | None = None) -> str:
     if kind == "name":
         return "填写活动监视器 / 任务管理器中的进程名，支持 * 通配符，例如 chrome*。"
     if platform_name == "darwin":
-        return "推荐选择整个 .app；如需精确指定内部程序，点“包内程序…”可直接进入 Contents/MacOS。"
+        return (
+            "推荐选整个 .app；要精确指定包内程序时点“包内程序…”："
+            "先选应用，再从 Contents/MacOS 列表中选择。"
+        )
     if platform_name == "win32":
         return "选择程序实际的 .exe 文件；程序稍后启动也会被自动发现并开始采集。"
     return "选择应用或可执行文件路径。"
@@ -177,6 +180,46 @@ def app_macos_directory(app_path: str | Path) -> Path | None:
         return None
     macos_dir = bundle / "Contents" / "MacOS"
     return macos_dir if macos_dir.is_dir() else None
+
+
+def list_bundle_executables(app_path: str | Path) -> list[Path]:
+    """List the files inside ``Contents/MacOS``, most likely target first.
+
+    macOS file panels treat a ``.app`` as an opaque file and refuse to descend
+    into it, so the desktop UI shows this list itself instead of relying on the
+    system picker to "enter" the bundle.
+    """
+    bundle = enclosing_app_bundle(app_path)
+    if bundle is None:
+        return []
+    macos_dir = app_macos_directory(bundle)
+    if macos_dir is None:
+        return []
+    try:
+        files = [item for item in macos_dir.iterdir() if item.is_file()]
+    except OSError:
+        return []
+    main = resolve_app_executable(bundle)
+
+    def sort_key(item: Path) -> tuple:
+        return (
+            item != main,
+            not os.access(item, os.X_OK),
+            item.name.casefold(),
+        )
+
+    return sorted(files, key=sort_key)
+
+
+def bundle_executable_label(path: Path) -> str:
+    """Describe one candidate inside ``Contents/MacOS`` for the picker."""
+    try:
+        size_kb = max(1, round(path.stat().st_size / 1024))
+    except OSError:
+        size_kb = 0
+    size_text = f"{size_kb:,} KB" if size_kb else "大小未知"
+    executable = "可执行" if os.access(path, os.X_OK) else "普通文件"
+    return f"{path.name} · {executable} · {size_text}"
 
 
 def describe_target(kind: str, value: str, platform_name: str | None = None) -> tuple[str, str]:
@@ -1653,10 +1696,17 @@ class WatchdogGui:
             self.target_value_var.set(self._clean_target_path(selected))
 
     def _browse_inner_executable(self) -> None:
-        """Open a selected app bundle directly at its Contents/MacOS folder."""
+        """Pick one program inside a ``.app`` bundle without the system panel.
+
+        The native macOS picker treats a bundle as an opaque file, so "enter the
+        app and choose the inner binary" is impossible there. The bundle is
+        chosen first, then this window lists ``Contents/MacOS`` itself.
+        """
         current = self._clean_target_path(self.target_value_var.get())
         bundle = enclosing_app_bundle(current) if current else None
-        if bundle is None or not bundle.is_dir():
+        if bundle is not None and not bundle.is_dir():
+            bundle = None
+        if bundle is None:
             handled, selected = choose_macos_target()
             if not handled:
                 selected = filedialog.askopenfilename(
@@ -1667,7 +1717,7 @@ class WatchdogGui:
             if not selected:
                 return
             bundle = enclosing_app_bundle(selected)
-        if bundle is None:
+        if bundle is None or not bundle.is_dir():
             messagebox.showwarning(
                 "需要选择应用程序",
                 "请先选择一个 .app 应用程序，然后再选择包内可执行文件。",
@@ -1680,15 +1730,163 @@ class WatchdogGui:
                 f"{bundle.name} 中没有找到 Contents/MacOS 目录。",
             )
             return
-        main_executable = resolve_app_executable(bundle)
-        selected = filedialog.askopenfilename(
-            title=f"选择 {bundle.name} 内的可执行文件",
-            initialdir=str(macos_dir),
-            initialfile=main_executable.name if main_executable is not None else "",
-            filetypes=[("Unix 可执行文件", "*"), ("所有文件", "*")],
+        chosen = self._ask_bundle_executable(bundle)
+        if chosen is not None:
+            self.target_value_var.set(str(chosen))
+
+    def _ask_bundle_executable(self, bundle: Path) -> Path | None:
+        """Modal window listing ``Contents/MacOS`` entries of *bundle*."""
+        candidates = list_bundle_executables(bundle)
+        if not candidates:
+            messagebox.showwarning(
+                "包内没有程序",
+                f"{bundle.name} 的 Contents/MacOS 目录是空的。",
+            )
+            return None
+
+        main = resolve_app_executable(bundle)
+        top = ctk.CTkToplevel(self.root)
+        top.title(f"选择 {bundle.name} 内的程序")
+        top.configure(fg_color=BG)
+        top.resizable(False, False)
+        width, height = 560, min(520, 190 + 54 * len(candidates))
+        self._center_child(top, width, height)
+        try:
+            top.transient(self.root)
+        except tk.TclError:
+            pass
+
+        header = ctk.CTkFrame(top, fg_color=BG, corner_radius=0)
+        header.pack(fill="x", padx=22, pady=(20, 0))
+        self._label(header, "选择包内程序", size=15, weight="bold").pack(anchor="w")
+        self._label(
+            header,
+            f"{bundle.name} · Contents/MacOS",
+            size=11,
+            color=TEXT_SECONDARY,
+        ).pack(anchor="w", pady=(4, 0))
+        self._label(
+            header,
+            "这里列出包内的全部文件；没有后缀的可执行文件就是应用真正运行时启动的程序。",
+            size=11,
+            color=TEXT_SECONDARY,
+            wraplength=510,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 0))
+
+        body = ctk.CTkFrame(top, fg_color=SURFACE, border_width=1, border_color=BORDER, corner_radius=14)
+        body.pack(fill="both", expand=True, padx=22, pady=(14, 0))
+        scroll = ctk.CTkScrollableFrame(
+            body,
+            fg_color=SURFACE,
+            corner_radius=0,
+            scrollbar_fg_color=SURFACE,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=SURFACE_HOVER,
         )
-        if selected:
-            self.target_value_var.set(self._clean_target_path(selected))
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        scroll.grid_columnconfigure(0, weight=1)
+
+        index_var = tk.IntVar(value=0)
+        result: dict[str, Path | None] = {"path": None}
+        labels: list[str] = []
+        for row, candidate in enumerate(candidates):
+            card = ctk.CTkFrame(scroll, fg_color=SURFACE_ALT, corner_radius=11)
+            card.grid(row=row, column=0, sticky="ew", padx=(0, 6), pady=(0, 6))
+            card.grid_columnconfigure(0, weight=1)
+            badge = "主程序 · " if candidate == main else ""
+            labels.append(f"{badge}{bundle_executable_label(candidate)}")
+            radio = ctk.CTkRadioButton(
+                card,
+                text=labels[-1],
+                variable=index_var,
+                value=row,
+                fg_color=SURFACE_ALT,
+                hover_color=SURFACE_HOVER,
+                border_color=BORDER,
+                radiobutton_width=16,
+                radiobutton_height=16,
+                text_color=TEXT,
+                font=self._font(12),
+                command=None,
+            )
+            radio.grid(row=0, column=0, sticky="w", padx=12, pady=9)
+            self._label(
+                card,
+                f"Contents/MacOS/{candidate.name}",
+                size=10,
+                color=TEXT_SECONDARY,
+            ).grid(row=1, column=0, sticky="w", padx=(38, 12), pady=(0, 8))
+            for widget in (
+                card,
+                radio,
+                getattr(radio, "_text_label", None),
+                getattr(radio, "_canvas", None),
+            ):
+                if widget is None:
+                    continue
+                widget.bind(
+                    "<Double-Button-1>",
+                    lambda _event: self._confirm_picker(top, result, candidates, index_var),
+                )
+
+        footer = ctk.CTkFrame(top, fg_color=BG, corner_radius=0)
+        footer.pack(fill="x", padx=22, pady=(14, 20))
+        footer.grid_columnconfigure(0, weight=1)
+        self._label(
+            footer,
+            "选择后可直接粘贴路径，也可以在输入框里手工修改。",
+            size=10,
+            color=MUTED,
+        ).grid(row=0, column=0, sticky="w")
+        self._button(
+            footer,
+            "取消",
+            lambda: self._confirm_picker(top, result, candidates, index_var, confirmed=False),
+            kind="secondary",
+            width=88,
+        ).grid(row=0, column=1, padx=(8, 6))
+        self._button(
+            footer,
+            "使用该程序",
+            lambda: self._confirm_picker(top, result, candidates, index_var),
+            kind="primary",
+            width=112,
+            bold=True,
+        ).grid(row=0, column=2)
+
+        top.bind("<Escape>", lambda _event: self._confirm_picker(top, result, candidates, index_var, confirmed=False))
+        top.bind("<Return>", lambda _event: self._confirm_picker(top, result, candidates, index_var))
+        top.protocol("WM_DELETE_WINDOW", lambda: self._confirm_picker(top, result, candidates, index_var, confirmed=False))
+        try:
+            top.grab_set()
+            top.focus_force()
+        except tk.TclError:
+            pass
+        self.root.wait_window(top)
+        return result["path"]
+
+    def _confirm_picker(self, top, result: dict, candidates: list[Path], index_var: tk.IntVar, *, confirmed: bool = True) -> None:
+        if confirmed:
+            index = max(0, min(index_var.get(), len(candidates) - 1))
+            result["path"] = candidates[index]
+        try:
+            top.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            top.destroy()
+        except tk.TclError:
+            pass
+
+    def _center_child(self, child: tk.Toplevel, width: int, height: int) -> None:
+        try:
+            self.root.update_idletasks()
+            x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - width) // 2)
+            y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - height) // 3)
+            child.geometry(f"{width}x{height}+{max(0, x)}+{max(0, y)}")
+        except tk.TclError:
+            child.geometry(f"{width}x{height}")
 
     @staticmethod
     def _clean_target_path(value: str) -> str:

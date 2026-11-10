@@ -7,8 +7,10 @@ from pathlib import Path
 
 from watchdog_perf.gui import (
     app_macos_directory,
+    bundle_executable_label,
     describe_target,
     enclosing_app_bundle,
+    list_bundle_executables,
     resolve_app_executable,
     target_hint,
     target_labels,
@@ -99,6 +101,41 @@ class AppBundleResolutionTests(unittest.TestCase):
             path.write_text("demo", encoding="utf-8")
             self.assertIsNone(enclosing_app_bundle(path))
             self.assertIsNone(app_macos_directory(path))
+
+    def test_lists_bundle_programs_with_main_first(self) -> None:
+        """The in-app picker must see Contents/MacOS without any file dialog."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._make_bundle(Path(tmp), "Demo", "Demo")
+            macos_dir = bundle / "Contents" / "MacOS"
+            (macos_dir / "Helper").write_text("#!/bin/sh\n", encoding="utf-8")
+            (macos_dir / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+            candidates = list_bundle_executables(bundle)
+            names = [item.name for item in candidates]
+            self.assertEqual(set(names), {"Demo", "Helper", "notes.txt"})
+            self.assertEqual(names[0], "Demo")
+            # Works from an inner executable path as well as the bundle root.
+            self.assertEqual(
+                [item.name for item in list_bundle_executables(macos_dir / "Demo")],
+                names,
+            )
+
+    def test_lists_nothing_for_missing_or_plain_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plain = root / "demo"
+            plain.write_text("demo", encoding="utf-8")
+            self.assertEqual(list_bundle_executables(plain), [])
+            broken = root / "Broken.app"
+            broken.mkdir()
+            self.assertEqual(list_bundle_executables(broken), [])
+
+    def test_bundle_executable_label_mentions_name_and_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._make_bundle(Path(tmp), "Demo", "Demo")
+            label = bundle_executable_label(bundle / "Contents" / "MacOS" / "Demo")
+            self.assertTrue(label.startswith("Demo ·"))
+            self.assertIn("KB", label)
 
 
 class TargetDescriptionTests(unittest.TestCase):
